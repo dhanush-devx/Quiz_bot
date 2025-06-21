@@ -3,6 +3,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 from handlers import start, quizz_set, quizz_start, leaderboard, leaderboard_reset, handle_message, handle_callback_query
 from database import init_db
 from config import Config
+import os
 
 # Initialize database
 init_db()
@@ -31,7 +32,7 @@ def main():
     application.add_handler(CallbackQueryHandler(handle_callback_query))
     
     # Start the bot with webhook
-    WEBHOOK_URL = "https://your-domain.com/telegram-webhook"  # Replace with your public URL
+    WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://your-domain.com/telegram-webhook")  # Replace with your public URL or set env var
     
     application.run_webhook(
         listen="0.0.0.0",
