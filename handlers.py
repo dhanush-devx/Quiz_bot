@@ -1,132 +1,229 @@
-from telegram import Update
-from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters
-from database import Session, Quiz
 import logging
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram.ext import ContextTypes, CallbackContext
+from database import Session, Quiz, Leaderboard
+from config import Config
+import redis
 
-# Quiz creation states
-AWAITING_TITLE = 1
-AWAITING_QUESTION = 2
+# Redis connection
+redis_client = redis.Redis(
+    host=Config.REDIS_HOST,
+    port=Config.REDIS_PORT,
+    db=Config.REDIS_DB
+)
 
-async def start_quiz_creation(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Initiate quiz creation process"""
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "📝 Let's create a new quiz!\n"
-        "Please send me the TITLE for your quiz.\n\n"
-        "Type /cancel at any time to abort."
+        "🌟 **QuizBot Activated!** 🌟\n\n"
+        "Admin commands:\n"
+        "→ /quizz_set - Create new quizzes\n"
+        "→ /leaderboard_reset - Reset scores\n\n"
+        "User commands:\n"
+        "→ /quizz_start - Begin a quiz\n"
+        "→ /leaderboard - View rankings"
     )
-    context.user_data['quiz_creation'] = {'state': AWAITING_TITLE, 'questions': []}
-    return AWAITING_TITLE
 
-async def handle_quiz_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Process quiz title and prompt for first question"""
-    title = update.message.text
-    context.user_data['quiz_creation']['title'] = title
-    context.user_data['quiz_creation']['state'] = AWAITING_QUESTION
-    
-    await update.message.reply_text(
-        f"✅ Title set: {title}\n\n"
-        "Now send your first question in this format:\n"
-        "<b>Question?|Option1|Option2|Option3|Option4|CorrectIndex</b>\n\n"
-        "Example:\n"
-        "<i>What is 2+2?|3|4|5|6|1</i>\n\n"
-        "Type /done when finished adding questions.",
-        parse_mode="HTML"
-    )
-    return AWAITING_QUESTION
-
-async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Process quiz question input"""
-    try:
-        parts = update.message.text.split('|')
-        if len(parts) < 6:
-            raise ValueError("Insufficient parts")
-            
-        question_text = parts[0].strip()
-        options = [opt.strip() for opt in parts[1:5]]
-        correct_index = int(parts[5].strip())
-        
-        if correct_index < 0 or correct_index > 3:
-            raise ValueError("Invalid option index (0-3)")
-        
-        # Store question
-        context.user_data['quiz_creation']['questions'].append({
-            'text': question_text,
-            'options': options,
-            'correct_index': correct_index
-        })
-        
-        await update.message.reply_text(
-            f"✅ Question added! Total questions: {len(context.user_data['quiz_creation']['questions']}\n"
-            "Send next question or /done to finish."
-        )
-    except Exception as e:
-        logging.error(f"Question format error: {e}")
-        await update.message.reply_text(
-            "⚠️ Invalid format. Please use:\n"
-            "<b>Question?|Option1|Option2|Option3|Option4|CorrectIndex</b>\n\n"
-            "Example: <i>Capital of France?|Berlin|London|Paris|Rome|2</i>",
-            parse_mode="HTML"
-        )
-    return AWAITING_QUESTION
-
-async def save_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Save quiz to database and clean up"""
-    quiz_data = context.user_data['quiz_creation']
-    if not quiz_data.get('questions'):
-        await update.message.reply_text("❌ Quiz not saved - no questions added!")
+async def quizz_set(update: Update, context: CallbackContext):
+    if not await _is_admin(update):
+        await update.message.reply_text("⛔️ **Admin access required!**")
         return
-    
-    # Save to database
+
+    await update.message.reply_text(
+        "📝 Enter quiz title:",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data="cancel_quiz")]])
+    )
+    context.user_data.clear()
+    context.user_data['state'] = 'AWAITING_TITLE'
+
+async def handle_message(update: Update, context: CallbackContext):
+    state = context.user_data.get('state')
+
+    if state == 'AWAITING_TITLE':
+        title = update.message.text.strip()
+        if not title:
+            await update.message.reply_text("❌ Quiz title cannot be empty. Please enter a valid title.")
+            return
+        context.user_data['title'] = title
+        context.user_data['questions'] = []
+        context.user_data['state'] = 'AWAITING_QUESTION'
+        await update.message.reply_text(
+            "📝 Enter the first question:",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data="cancel_quiz")]])
+        )
+    elif state == 'AWAITING_QUESTION':
+        question = update.message.text.strip()
+        if not question:
+            await update.message.reply_text("❌ Question cannot be empty. Please enter a valid question.")
+            return
+        context.user_data['current_question'] = {'question': question, 'options': []}
+        context.user_data['state'] = 'AWAITING_OPTION'
+        await update.message.reply_text(
+            "📝 Enter option 1 for this question:",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data="cancel_quiz")]])
+        )
+    elif state == 'AWAITING_OPTION':
+        option = update.message.text.strip()
+        if not option:
+            await update.message.reply_text("❌ Option cannot be empty. Please enter a valid option.")
+            return
+        context.user_data['current_question']['options'].append(option)
+        option_count = len(context.user_data['current_question']['options'])
+        if option_count < 2:
+            await update.message.reply_text(
+                f"📝 Enter option {option_count + 1} for this question:",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data="cancel_quiz")]])
+            )
+        else:
+            context.user_data['state'] = 'AWAITING_ANSWER'
+            keyboard = [
+                [InlineKeyboardButton(opt, callback_data=f"answer_{idx}")]
+                for idx, opt in enumerate(context.user_data['current_question']['options'])
+            ]
+            await update.message.reply_text(
+                "✅ Select the correct answer:",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+    else:
+        await update.message.reply_text("ℹ️ Use /quizz_set to start creating a quiz.")
+
+async def handle_callback_query(update: Update, context: CallbackContext):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    if data == "cancel_quiz":
+        context.user_data.clear()
+        await query.edit_message_text("❌ Quiz creation cancelled.")
+        return
+
+    state = context.user_data.get('state')
+
+    if state == 'AWAITING_ANSWER' and data.startswith("answer_"):
+        answer_index = int(data.split("_")[1])
+        context.user_data['current_question']['answer'] = answer_index
+        context.user_data['questions'].append(context.user_data['current_question'])
+        context.user_data.pop('current_question', None)
+
+        await query.edit_message_text(f"✅ Question added. Total questions: {len(context.user_data['questions'])}")
+
+        # Ask if user wants to add another question or finish
+        keyboard = [
+            [InlineKeyboardButton("Add another question", callback_data="add_question")],
+            [InlineKeyboardButton("Finish quiz", callback_data="finish_quiz")],
+            [InlineKeyboardButton("Cancel", callback_data="cancel_quiz")]
+        ]
+        context.user_data['state'] = 'QUIZ_IN_PROGRESS'
+        await query.message.reply_text("What would you like to do next?", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif state == 'QUIZ_IN_PROGRESS':
+        if data == "add_question":
+            context.user_data['state'] = 'AWAITING_QUESTION'
+            await query.message.reply_text(
+                "📝 Enter the next question:",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data="cancel_quiz")]])
+            )
+        elif data == "finish_quiz":
+            # Save quiz to DB
+            session = Session()
+            try:
+                quiz = Quiz(
+                    title=context.user_data['title'],
+                    questions=context.user_data['questions'],
+                    group_id=str(update.effective_chat.id)
+                )
+                session.add(quiz)
+                session.commit()
+                await query.message.reply_text(f"🎉 Quiz '{quiz.title}' created successfully with {len(quiz.questions)} questions!")
+            except Exception as e:
+                logging.error(f"Error saving quiz: {e}")
+                await query.message.reply_text("❌ Failed to save quiz. Please try again.")
+            finally:
+                Session.remove()
+            context.user_data.clear()
+        else:
+            await query.message.reply_text("❌ Unknown action.")
+    else:
+        await query.message.reply_text("ℹ️ Use /quizz_set to start creating a quiz.")
+
+async def quizz_start(update: Update, context: CallbackContext):
     session = Session()
     try:
-        new_quiz = Quiz(
-            title=quiz_data['title'],
-            questions=quiz_data['questions'],
-            group_id=str(update.effective_chat.id)
-        )
-        session.add(new_quiz)
-        session.commit()
-        quiz_id = new_quiz.id
+        quizzes = session.query(Quiz).filter_by(group_id=str(update.effective_chat.id)).all()
+        if not quizzes:
+            await update.message.reply_text("ℹ️ No quizzes available. Create one with /quizz_set")
+            return
+        
+        keyboard = [
+            [InlineKeyboardButton(q.title, callback_data=f"start_quiz_{q.id}")]
+            for q in quizzes
+        ]
         await update.message.reply_text(
-            f"🎉 Quiz saved successfully! ID: {quiz_id}\n"
-            f"Title: {quiz_data['title']}\n"
-            f"Questions: {len(quiz_data['questions'])}\n\n"
-            "Use /quizz_start to begin this quiz."
+            "📚 **Available Quizzes:**",
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
-    except Exception as e:
-        logging.error(f"Database error: {e}")
-        await update.message.reply_text("❌ Failed to save quiz. Please try again.")
     finally:
-        session.close()
-        # Clean up
-        context.user_data.pop('quiz_creation', None)
+        Session.remove()
 
-async def cancel_quiz_creation(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Abort quiz creation"""
-    if 'quiz_creation' in context.user_data:
-        context.user_data.pop('quiz_creation')
-    await update.message.reply_text("❌ Quiz creation cancelled.")
-
-# Handler registration in bot.py
-def setup_quiz_handlers(application):
-    application.add_handler(CommandHandler("quizz_set", start_quiz_creation))
+async def leaderboard(update: Update, context: CallbackContext):
+    quiz_id = context.args[0] if context.args else None
+    if not quiz_id:
+        await update.message.reply_text("ℹ️ Usage: /leaderboard <quiz_id>")
+        return
     
-    # Conversation handlers
-    conv_handler = ConversationHandler(
-        entry_points=[MessageHandler(filters.TEXT & ~filters.COMMAND, handle_quiz_title)],
-        states={
-            AWAITING_TITLE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_quiz_title)
-            ],
-            AWAITING_QUESTION: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_question),
-                CommandHandler("done", save_quiz)
-            ]
-        },
-        fallbacks=[
-            CommandHandler("cancel", cancel_quiz_creation),
-            CommandHandler("stop", cancel_quiz_creation)
-        ],
-        allow_reentry=True
-    )
-    application.add_handler(conv_handler)
+    # Check cache
+    cache_key = f"leaderboard:{quiz_id}"
+    cached = redis_client.get(cache_key)
+    if cached:
+        await update.message.reply_text(cached.decode())
+        return
+    
+    session = Session()
+    try:
+        lb = session.query(Leaderboard).filter_by(quiz_id=quiz_id).first()
+        if not lb or not lb.user_scores:
+            await update.message.reply_text("📊 No scores recorded yet!")
+            return
+        
+        # Format leaderboard
+        sorted_scores = sorted(lb.user_scores.items(), key=lambda x: x[1], reverse=True)
+        leaderboard_text = "🏆 **Leaderboard** 🏆\n\n" + "\n".join(
+            [f"{idx+1}. User {uid}: {score}" for idx, (uid, score) in enumerate(sorted_scores)]
+        )
+        
+        # Cache for 10 minutes
+        redis_client.setex(cache_key, 600, leaderboard_text)
+        await update.message.reply_text(leaderboard_text)
+    finally:
+        Session.remove()
+
+async def leaderboard_reset(update: Update, context: CallbackContext):
+    if not await _is_admin(update):
+        await update.message.reply_text("⛔️ **Admin access required!**")
+        return
+    
+    quiz_id = context.args[0] if context.args else None
+    if not quiz_id:
+        await update.message.reply_text("ℹ️ Usage: /leaderboard_reset <quiz_id>")
+        return
+    
+    session = Session()
+    try:
+        lb = session.query(Leaderboard).filter_by(quiz_id=quiz_id).first()
+        if lb:
+            lb.user_scores = {}
+            session.commit()
+        redis_client.delete(f"leaderboard:{quiz_id}")
+        await update.message.reply_text(f"✅ Leaderboard for quiz {quiz_id} reset!")
+    finally:
+        Session.remove()
+
+# Helper functions
+async def _is_admin(update: Update) -> bool:
+    if update.effective_user.id in Config.ADMIN_IDS:
+        return True
+    try:
+        admins = await update.effective_chat.get_administrators()
+        return update.effective_user.id in [admin.user.id for admin in admins]
+    except Exception as e:
+        logging.error(f"Admin check failed: {e}")
+        return False
