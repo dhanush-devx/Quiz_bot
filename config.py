@@ -13,7 +13,7 @@ class Config:
     DB_PASS = os.getenv("DB_PASS", "secure_password")
     DB_HOST = os.getenv("DB_HOST", "postgres")
     DB_NAME = os.getenv("DB_NAME", "quizbot_prod")
-    SQLALCHEMY_DATABASE_URI = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}/{DB_NAME}"
+    SQLALCHEMY_DATABASE_URI = os.getenv("DATABASE_URL") or f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}/{DB_NAME}"
     
     # Redis - Disabled as per user request
     REDIS_HOST = None
