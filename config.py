@@ -6,7 +6,7 @@ load_dotenv()
 
 class Config:
     # Telegram
-    BOT_TOKEN = os.getenv("BOT_TOKEN")
+    BOT_TOKEN = os.getenv("8187052777:AAGUmozz_nvFrtItvpOWasMNfNzdOfo9gZc")
     
     # Database
     DB_USER = os.getenv("DB_USER", "quizbot")
