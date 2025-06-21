@@ -1,12 +1,12 @@
 import os
 from dotenv import load_dotenv
 
-# Load .env file if it exists
-load_dotenv()
+# Load .env file explicitly from the root directory
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '.env'))
 
 class Config:
     # Telegram
-    BOT_TOKEN = os.getenv("8187052777:AAGUmozz_nvFrtItvpOWasMNfNzdOfo9gZc")
+    BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_PROD_TOKEN")
     
     # Database
     DB_USER = os.getenv("DB_USER", "quizbot")
