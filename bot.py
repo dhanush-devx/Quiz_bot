@@ -32,7 +32,7 @@ def main():
     application.add_handler(CallbackQueryHandler(handle_callback_query))
     
     # Start the bot with webhook
-    WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://your-domain.com/telegram-webhook")  # Replace with your public URL or set env var
+    WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Replace with your public URL or set env var
     
     application.run_webhook(
         listen="0.0.0.0",
