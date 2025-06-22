@@ -16,6 +16,9 @@ redis_client = redis.Redis(
 AWAITING_TITLE = 1
 AWAITING_DESCRIPTION = 2
 AWAITING_QUESTION = 3
+AWAITING_UNDO = 4
+AWAITING_TIME_LIMIT = 5
+AWAITING_SHUFFLE = 6
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send welcome message"""
@@ -47,10 +50,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if state == AWAITING_TITLE:
         quiz_data['title'] = update.message.text
         context.user_data['state'] = AWAITING_DESCRIPTION
-        await update.message.reply_text("📝 Enter quiz description:")
+        await update.message.reply_text("📝 Enter quiz description or /skip:")
     
     elif state == AWAITING_DESCRIPTION:
-        quiz_data['description'] = update.message.text
+        if update.message.text == "/skip":
+            quiz_data['description'] = ""
+        else:
+            quiz_data['description'] = update.message.text
         context.user_data['state'] = AWAITING_QUESTION
         await update.message.reply_text(
             "📝 Create a question poll with options and mark the correct answer.\n"
@@ -61,6 +67,34 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "⚠️ Please send the poll directly, not as a forwarded message."
         )
+    
+    elif state == AWAITING_UNDO:
+        await update.message.reply_text(
+            "Send /undo to remove the last question or send the next poll."
+        )
+    
+    elif state == AWAITING_TIME_LIMIT:
+        try:
+            time_limit = int(update.message.text.split()[0])
+            quiz_data['time_limit'] = time_limit
+            context.user_data['state'] = AWAITING_SHUFFLE
+            await update.message.reply_text(
+                "Shuffle questions and answer options? (yes/no)"
+            )
+        except Exception:
+            await update.message.reply_text(
+                "Please enter a valid number for time limit in seconds."
+            )
+    
+    elif state == AWAITING_SHUFFLE:
+        text = update.message.text.lower()
+        if text in ["yes", "y"]:
+            quiz_data['shuffle'] = True
+        else:
+            quiz_data['shuffle'] = False
+        # Quiz creation finished
+        await update.message.reply_text("👍 Quiz created.")
+        context.user_data['state'] = None
 
 async def handle_poll(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle incoming polls during quiz creation"""
@@ -70,8 +104,8 @@ async def handle_poll(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logging.info(f"Current state: {state}")
     quiz_data = context.user_data.get('quiz_creation', {})
     
-    if state != AWAITING_QUESTION:
-        logging.info("Not in AWAITING_QUESTION state, ignoring poll")
+    if state != AWAITING_QUESTION and state != AWAITING_UNDO:
+        logging.info("Not in AWAITING_QUESTION or AWAITING_UNDO state, ignoring poll")
         return
     
     poll = update.poll
@@ -83,16 +117,102 @@ async def handle_poll(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # Store question
-    quiz_data.setdefault('questions', []).append({
-        "q": poll.question,
-        "o": [option.text for option in poll.options],
-        "a": poll.correct_option_id
-    })
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text=f"✅ Question added! Total: {len(quiz_data['questions'])}\nSend /done to finish or create another poll."
-    )
+    if state == AWAITING_QUESTION:
+        # Store question
+        quiz_data.setdefault('questions', []).append({
+            "q": poll.question,
+            "o": [option.text for option in poll.options],
+            "a": poll.correct_option_id
+        })
+        context.user_data['state'] = AWAITING_UNDO
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"✅ Question added! Total: {len(quiz_data['questions'])}\n"
+                 "Send /undo to fix last question or send next poll."
+        )
+    elif state == AWAITING_UNDO:
+        # Add more questions
+        quiz_data.setdefault('questions', []).append({
+            "q": poll.question,
+            "o": [option.text for option in poll.options],
+            "a": poll.correct_option_id
+        })
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"✅ Question added! Total: {len(quiz_data['questions'])}\n"
+                 "Send /undo to fix last question or send next poll."
+        )
+
+async def undo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Undo last question during quiz creation"""
+    state = context.user_data.get('state')
+    quiz_data = context.user_data.get('quiz_creation', {})
+    if state not in [AWAITING_UNDO, AWAITING_QUESTION]:
+        await update.message.reply_text("Nothing to undo.")
+        return
+    if 'questions' in quiz_data and quiz_data['questions']:
+        removed = quiz_data['questions'].pop()
+        await update.message.reply_text(f"Removed last question: {removed['q']}")
+    else:
+        await update.message.reply_text("No questions to remove.")
+    context.user_data['state'] = AWAITING_UNDO
+
+async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Finalize quiz creation"""
+    if not await _is_admin(update):
+        await update.message.reply_text("⛔️ **Admin access required!**")
+        return
+    
+    quiz_data = context.user_data.get('quiz_creation')
+    if not quiz_data or 'title' not in quiz_data:
+        await update.message.reply_text("❌ No active quiz creation.")
+        return
+    
+    # Ask for time limit if not set
+    if 'time_limit' not in quiz_data:
+        context.user_data['state'] = AWAITING_TIME_LIMIT
+        await update.message.reply_text(
+            "Please set a time limit for questions in seconds. In groups, the bot will send the next question as soon as this time is up."
+        )
+        return
+    
+    # Ask for shuffle if not set
+    if 'shuffle' not in quiz_data:
+        context.user_data['state'] = AWAITING_SHUFFLE
+        await update.message.reply_text(
+            "Shuffle questions and answer options? (yes/no)"
+        )
+        return
+    
+    # Save quiz to database
+    session = Session()
+    try:
+        new_quiz = Quiz(
+            title=quiz_data['title'],
+            description=quiz_data.get('description', ''),
+            group_id=str(update.effective_chat.id),
+            questions=quiz_data['questions'],
+            time_limit=quiz_data.get('time_limit', 10),
+            shuffle=quiz_data.get('shuffle', False),
+            is_active=True
+        )
+        session.add(new_quiz)
+        session.commit()
+        await update.message.reply_text(
+            f"👍 Quiz created successfully! ID: {new_quiz.id}\n"
+            f"Title: {quiz_data['title']}\n"
+            f"Questions: {len(quiz_data['questions'])}\n"
+            f"Time limit: {new_quiz.time_limit} seconds\n"
+            f"Shuffle: {'Yes' if new_quiz.shuffle else 'No'}"
+        )
+    except Exception as e:
+        import logging
+        logging.error(f"Quiz creation failed: {e}")
+        await update.message.reply_text("❌ Failed to save quiz.")
+    finally:
+        session.close()
+        context.user_data.pop('quiz_creation', None)
+        context.user_data.pop('state', None)
 
 async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Finalize quiz creation"""

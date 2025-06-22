@@ -2,7 +2,7 @@ import logging
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, PollAnswerHandler, PollHandler
 from handlers import (
     start, quizz_set, quizz_start, leaderboard, leaderboard_reset,
-    done, close, handle_message, handle_poll_answer, handle_poll
+    done, close, handle_message, handle_poll_answer, handle_poll, undo
 )
 from database import init_db
 from config import Config
@@ -24,6 +24,7 @@ def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("quizz_set", quizz_set))
     application.add_handler(CommandHandler("done", done))
+    application.add_handler(CommandHandler("undo", undo))
     application.add_handler(CommandHandler("close", close))
     application.add_handler(CommandHandler("quizz_start", quizz_start))
     application.add_handler(CommandHandler("leaderboard", leaderboard))
