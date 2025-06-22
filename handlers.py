@@ -53,10 +53,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📝 Enter quiz description or /skip:")
     
     elif state == AWAITING_DESCRIPTION:
-        if update.message.text == "/skip" or not update.message.text or update.message.text.lower() == "null":
-            quiz_data['description'] = ""
-        else:
-            quiz_data['description'] = update.message.text
+        # Remove description step as per user request
+        quiz_data['description'] = None
         context.user_data['state'] = AWAITING_QUESTION
         await update.message.reply_text(
             "📝 Create a question poll with options and mark the correct answer.\n"
@@ -189,7 +187,7 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         new_quiz = Quiz(
             title=quiz_data['title'],
-            description=quiz_data.get('description', ''),
+            # Remove description field to avoid DB error
             group_id=str(update.effective_chat.id),
             questions=quiz_data['questions'],
             time_limit=quiz_data.get('time_limit', 10),
