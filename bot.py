@@ -1,9 +1,11 @@
 import logging
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, CallbackQueryHandler
-from handlers import start, quizz_set, quizz_start, leaderboard, leaderboard_reset, handle_message, handle_callback_query
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, PollAnswerHandler
+from handlers import (
+    start, quizz_set, quizz_start, leaderboard, leaderboard_reset,
+    done, close, handle_message, handle_poll_answer
+)
 from database import init_db
 from config import Config
-import os
 
 # Initialize database
 init_db()
@@ -15,31 +17,26 @@ logging.basicConfig(
 )
 
 def main():
-    # Create application with webhook
+    # Create application
     application = ApplicationBuilder().token(Config.BOT_TOKEN).build()
     
     # Register handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("quizz_set", quizz_set))
+    application.add_handler(CommandHandler("done", done))
+    application.add_handler(CommandHandler("close", close))
     application.add_handler(CommandHandler("quizz_start", quizz_start))
     application.add_handler(CommandHandler("leaderboard", leaderboard))
     application.add_handler(CommandHandler("leaderboard_reset", leaderboard_reset))
-
-    # Add message handler for quiz creation flow
+    
+    # Message handlers
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-    # Add callback query handler for quiz creation flow
-    application.add_handler(CallbackQueryHandler(handle_callback_query))
     
-    # Start the bot with webhook
-    WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Replace with your public URL or set env var
+    # Poll handlers
+    application.add_handler(PollAnswerHandler(handle_poll_answer))
     
-    application.run_webhook(
-        listen="0.0.0.0",
-        port=8443,
-        url_path=Config.BOT_TOKEN,
-        webhook_url=f"{WEBHOOK_URL}/{Config.BOT_TOKEN}"
-    )
+    # Start the bot
+    application.run_polling()
 
 if __name__ == "__main__":
     main()

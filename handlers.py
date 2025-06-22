@@ -1,6 +1,6 @@
 import logging
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import ContextTypes, CallbackContext
+from telegram import Update, Poll, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters
 from database import Session, Quiz, Leaderboard
 from config import Config
 import redis
@@ -12,145 +12,141 @@ redis_client = redis.Redis(
     db=Config.REDIS_DB
 )
 
+# Quiz creation states
+AWAITING_TITLE = 1
+AWAITING_DESCRIPTION = 2
+AWAITING_QUESTION = 3
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send welcome message"""
     await update.message.reply_text(
         "🌟 **QuizBot Activated!** 🌟\n\n"
         "Admin commands:\n"
-        "→ /quizz_set - Create new quizzes\n"
+        "→ /quizz_set - Create quizzes\n"
+        "→ /quizz_start - Start quizzes\n"
         "→ /leaderboard_reset - Reset scores\n\n"
         "User commands:\n"
-        "→ /quizz_start - Begin a quiz\n"
         "→ /leaderboard - View rankings"
     )
 
-async def quizz_set(update: Update, context: CallbackContext):
+async def quizz_set(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Initiate quiz creation"""
     if not await _is_admin(update):
         await update.message.reply_text("⛔️ **Admin access required!**")
         return
+    
+    context.user_data['quiz_creation'] = {'questions': []}
+    context.user_data['state'] = AWAITING_TITLE
+    await update.message.reply_text("📝 Enter quiz title:")
 
-    await update.message.reply_text(
-        "📝 Enter quiz title:",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data="cancel_quiz")]])
-    )
-    context.user_data.clear()
-    context.user_data['state'] = 'AWAITING_TITLE'
-
-async def handle_message(update: Update, context: CallbackContext):
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle quiz creation states"""
     state = context.user_data.get('state')
-
-    if state == 'AWAITING_TITLE':
-        title = update.message.text.strip()
-        if not title:
-            await update.message.reply_text("❌ Quiz title cannot be empty. Please enter a valid title.")
-            return
-        context.user_data['title'] = title
-        context.user_data['questions'] = []
-        context.user_data['state'] = 'AWAITING_QUESTION'
+    quiz_data = context.user_data.get('quiz_creation', {})
+    
+    if state == AWAITING_TITLE:
+        quiz_data['title'] = update.message.text
+        context.user_data['state'] = AWAITING_DESCRIPTION
+        await update.message.reply_text("📝 Enter quiz description:")
+    
+    elif state == AWAITING_DESCRIPTION:
+        quiz_data['description'] = update.message.text
+        context.user_data['state'] = AWAITING_QUESTION
         await update.message.reply_text(
-            "📝 Enter the first question:",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data="cancel_quiz")]])
+            "📝 Create a question poll with options and mark the correct answer.\n"
+            "After creating the poll, forward it to me."
         )
-    elif state == 'AWAITING_QUESTION':
-        question = update.message.text.strip()
-        if not question:
-            await update.message.reply_text("❌ Question cannot be empty. Please enter a valid question.")
-            return
-        context.user_data['current_question'] = {'question': question, 'options': []}
-        context.user_data['state'] = 'AWAITING_OPTION'
-        await update.message.reply_text(
-            "📝 Enter option 1 for this question:",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data="cancel_quiz")]])
-        )
-    elif state == 'AWAITING_OPTION':
-        option = update.message.text.strip()
-        if not option:
-            await update.message.reply_text("❌ Option cannot be empty. Please enter a valid option.")
-            return
-        context.user_data['current_question']['options'].append(option)
-        option_count = len(context.user_data['current_question']['options'])
-        if option_count < 2:
+    
+    elif state == AWAITING_QUESTION:
+        if update.message.poll:
+            poll = update.message.poll
+            if poll.type != "regular" or not poll.options:
+                await update.message.reply_text("⚠️ Only regular polls with options are supported.")
+                return
+            
+            # Store question
+            quiz_data['questions'].append({
+                "q": poll.question,
+                "o": [option.text for option in poll.options],
+                "a": poll.correct_option_id
+            })
             await update.message.reply_text(
-                f"📝 Enter option {option_count + 1} for this question:",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data="cancel_quiz")]])
+                f"✅ Question added! Total: {len(quiz_data['questions'])}\n"
+                "Send /done to finish or create another poll."
             )
-        else:
-            context.user_data['state'] = 'AWAITING_ANSWER'
-            keyboard = [
-                [InlineKeyboardButton(opt, callback_data=f"answer_{idx}")]
-                for idx, opt in enumerate(context.user_data['current_question']['options'])
-            ]
-            await update.message.reply_text(
-                "✅ Select the correct answer:",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-    else:
-        await update.message.reply_text("ℹ️ Use /quizz_set to start creating a quiz.")
 
-async def handle_callback_query(update: Update, context: CallbackContext):
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-
-    if data == "cancel_quiz":
-        context.user_data.clear()
-        await query.edit_message_text("❌ Quiz creation cancelled.")
+async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Finalize quiz creation"""
+    if not await _is_admin(update):
+        await update.message.reply_text("⛔️ **Admin access required!**")
         return
-
-    state = context.user_data.get('state')
-
-    if state == 'AWAITING_ANSWER' and data.startswith("answer_"):
-        answer_index = int(data.split("_")[1])
-        context.user_data['current_question']['answer'] = answer_index
-        context.user_data['questions'].append(context.user_data['current_question'])
-        context.user_data.pop('current_question', None)
-
-        await query.edit_message_text(f"✅ Question added. Total questions: {len(context.user_data['questions'])}")
-
-        # Ask if user wants to add another question or finish
-        keyboard = [
-            [InlineKeyboardButton("Add another question", callback_data="add_question")],
-            [InlineKeyboardButton("Finish quiz", callback_data="finish_quiz")],
-            [InlineKeyboardButton("Cancel", callback_data="cancel_quiz")]
-        ]
-        context.user_data['state'] = 'QUIZ_IN_PROGRESS'
-        await query.message.reply_text("What would you like to do next?", reply_markup=InlineKeyboardMarkup(keyboard))
-
-    elif state == 'QUIZ_IN_PROGRESS':
-        if data == "add_question":
-            context.user_data['state'] = 'AWAITING_QUESTION'
-            await query.message.reply_text(
-                "📝 Enter the next question:",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data="cancel_quiz")]])
-            )
-        elif data == "finish_quiz":
-            # Save quiz to DB
-            session = Session()
-            try:
-                quiz = Quiz(
-                    title=context.user_data['title'],
-                    questions=context.user_data['questions'],
-                    group_id=str(update.effective_chat.id)
-                )
-                session.add(quiz)
-                session.commit()
-                await query.message.reply_text(f"🎉 Quiz '{quiz.title}' created successfully with {len(quiz.questions)} questions!")
-            except Exception as e:
-                logging.error(f"Error saving quiz: {e}")
-                await query.message.reply_text("❌ Failed to save quiz. Please try again.")
-            finally:
-                Session.remove()
-            context.user_data.clear()
-        else:
-            await query.message.reply_text("❌ Unknown action.")
-    else:
-        await query.message.reply_text("ℹ️ Use /quizz_set to start creating a quiz.")
-
-async def quizz_start(update: Update, context: CallbackContext):
+    
+    quiz_data = context.user_data.get('quiz_creation')
+    if not quiz_data or 'title' not in quiz_data:
+        await update.message.reply_text("❌ No active quiz creation.")
+        return
+    
     session = Session()
     try:
-        quizzes = session.query(Quiz).filter_by(group_id=str(update.effective_chat.id)).all()
+        new_quiz = Quiz(
+            title=quiz_data['title'],
+            description=quiz_data.get('description', ''),
+            group_id=str(update.effective_chat.id),
+            questions=quiz_data['questions']
+        )
+        session.add(new_quiz)
+        session.commit()
+        await update.message.reply_text(
+            f"🎉 Quiz created successfully! ID: {new_quiz.id}\n"
+            f"Title: {quiz_data['title']}\n"
+            f"Questions: {len(quiz_data['questions'])}"
+        )
+    except Exception as e:
+        logging.error(f"Quiz creation failed: {e}")
+        await update.message.reply_text("❌ Failed to save quiz.")
+    finally:
+        session.close()
+        context.user_data.pop('quiz_creation', None)
+        context.user_data.pop('state', None)
+
+async def close(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Close active quiz"""
+    if not await _is_admin(update):
+        await update.message.reply_text("⛔️ **Admin access required!**")
+        return
+    
+    session = Session()
+    try:
+        quiz_id = context.args[0] if context.args else None
+        if not quiz_id:
+            await update.message.reply_text("Usage: /close <quiz_id>")
+            return
+        
+        quiz = session.query(Quiz).filter_by(id=quiz_id).first()
+        if quiz:
+            quiz.is_active = False
+            session.commit()
+            await update.message.reply_text(f"✅ Quiz {quiz_id} closed.")
+        else:
+            await update.message.reply_text("❌ Quiz not found.")
+    finally:
+        session.close()
+
+async def quizz_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Start a quiz in the group"""
+    if not await _is_admin(update):
+        await update.message.reply_text("⛔️ **Admin access required!**")
+        return
+    
+    session = Session()
+    try:
+        quizzes = session.query(Quiz).filter_by(
+            group_id=str(update.effective_chat.id),
+            is_active=True
+        ).all()
+        
         if not quizzes:
-            await update.message.reply_text("ℹ️ No quizzes available. Create one with /quizz_set")
+            await update.message.reply_text("ℹ️ No active quizzes available.")
             return
         
         keyboard = [
@@ -158,13 +154,57 @@ async def quizz_start(update: Update, context: CallbackContext):
             for q in quizzes
         ]
         await update.message.reply_text(
-            "📚 **Available Quizzes:**",
+            "📚 **Active Quizzes:**",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
     finally:
-        Session.remove()
+        session.close()
 
-async def leaderboard(update: Update, context: CallbackContext):
+async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Process poll answers and update leaderboard"""
+    answer = update.poll_answer
+    user_id = str(answer.user.id)
+    
+    # Get quiz ID from cached poll data
+    poll_id = answer.poll_id
+    quiz_id = redis_client.get(f"poll:{poll_id}")
+    if not quiz_id:
+        return
+    
+    session = Session()
+    try:
+        quiz = session.query(Quiz).filter_by(id=quiz_id).first()
+        if not quiz or not quiz.is_active:
+            return
+        
+        # Find question index
+        question_idx = next(
+            (i for i, q in enumerate(quiz.questions) 
+             if q['q'] == context.bot_data.get(f"poll:{poll_id}:question")), 
+            None
+        )
+        if question_idx is None:
+            return
+        
+        # Check answer
+        question = quiz.questions[question_idx]
+        if answer.option_ids[0] == question['a']:
+            # Update leaderboard
+            lb = session.query(Leaderboard).filter_by(quiz_id=quiz_id).first()
+            if not lb:
+                lb = Leaderboard(quiz_id=quiz_id, user_scores={})
+                session.add(lb)
+            
+            lb.user_scores[user_id] = lb.user_scores.get(user_id, 0) + 1
+            session.commit()
+            
+            # Invalidate leaderboard cache
+            redis_client.delete(f"leaderboard:{quiz_id}")
+    finally:
+        session.close()
+
+async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show leaderboard"""
     quiz_id = context.args[0] if context.args else None
     if not quiz_id:
         await update.message.reply_text("ℹ️ Usage: /leaderboard <quiz_id>")
@@ -187,16 +227,17 @@ async def leaderboard(update: Update, context: CallbackContext):
         # Format leaderboard
         sorted_scores = sorted(lb.user_scores.items(), key=lambda x: x[1], reverse=True)
         leaderboard_text = "🏆 **Leaderboard** 🏆\n\n" + "\n".join(
-            [f"{idx+1}. User {uid}: {score}" for idx, (uid, score) in enumerate(sorted_scores)]
+            [f"{idx+1}. User {uid}: {score}" for idx, (uid, score) in enumerate(sorted_scores[:10])]
         )
         
         # Cache for 10 minutes
         redis_client.setex(cache_key, 600, leaderboard_text)
         await update.message.reply_text(leaderboard_text)
     finally:
-        Session.remove()
+        session.close()
 
-async def leaderboard_reset(update: Update, context: CallbackContext):
+async def leaderboard_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Reset leaderboard"""
     if not await _is_admin(update):
         await update.message.reply_text("⛔️ **Admin access required!**")
         return
@@ -215,15 +256,16 @@ async def leaderboard_reset(update: Update, context: CallbackContext):
         redis_client.delete(f"leaderboard:{quiz_id}")
         await update.message.reply_text(f"✅ Leaderboard for quiz {quiz_id} reset!")
     finally:
-        Session.remove()
+        session.close()
 
-# Helper functions
 async def _is_admin(update: Update) -> bool:
-    if update.effective_user.id in Config.ADMIN_IDS:
+    """Check if user is admin"""
+    user_id = update.effective_user.id
+    if user_id in Config.ADMIN_IDS:
         return True
     try:
         admins = await update.effective_chat.get_administrators()
-        return update.effective_user.id in [admin.user.id for admin in admins]
+        return any(admin.user.id == user_id for admin in admins)
     except Exception as e:
         logging.error(f"Admin check failed: {e}")
         return False

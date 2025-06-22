@@ -15,10 +15,10 @@ class Config:
     DB_NAME = os.getenv("DB_NAME", "quizbot_prod")
     SQLALCHEMY_DATABASE_URI = os.getenv("DATABASE_URL") or f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}/{DB_NAME}"
     
-    # Redis - Disabled as per user request
-    REDIS_HOST = None
-    REDIS_PORT = None
-    REDIS_DB = None
+    # Redis
+    REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+    REDIS_PORT = os.getenv("REDIS_PORT", 6379)
+    REDIS_DB = os.getenv("REDIS_DB", 0)
     
     # Admin IDs (comma separated)
     ADMIN_IDS = [int(id) for id in os.getenv("ADMIN_IDS", "").split(",") if id]
