@@ -54,26 +54,40 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['state'] = AWAITING_QUESTION
         await update.message.reply_text(
             "📝 Create a question poll with options and mark the correct answer.\n"
-            "After creating the poll, forward it to me."
+            "After creating the poll, send it here."
         )
     
     elif state == AWAITING_QUESTION:
-        if update.message.poll:
-            poll = update.message.poll
-            if poll.type != "regular" or not poll.options:
-                await update.message.reply_text("⚠️ Only regular polls with options are supported.")
-                return
-            
-            # Store question
-            quiz_data['questions'].append({
-                "q": poll.question,
-                "o": [option.text for option in poll.options],
-                "a": poll.correct_option_id
-            })
-            await update.message.reply_text(
-                f"✅ Question added! Total: {len(quiz_data['questions'])}\n"
-                "Send /done to finish or create another poll."
-            )
+        await update.message.reply_text(
+            "⚠️ Please send the poll directly, not as a forwarded message."
+        )
+
+async def handle_poll(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle incoming polls during quiz creation"""
+    state = context.user_data.get('state')
+    quiz_data = context.user_data.get('quiz_creation', {})
+    
+    if state != AWAITING_QUESTION:
+        return
+    
+    poll = update.poll
+    if poll.type != "regular" or not poll.options:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="⚠️ Only regular polls with options are supported."
+        )
+        return
+    
+    # Store question
+    quiz_data.setdefault('questions', []).append({
+        "q": poll.question,
+        "o": [option.text for option in poll.options],
+        "a": poll.correct_option_id
+    })
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=f"✅ Question added! Total: {len(quiz_data['questions'])}\nSend /done to finish or create another poll."
+    )
 
 async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Finalize quiz creation"""

@@ -1,8 +1,8 @@
 import logging
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, PollAnswerHandler
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, PollAnswerHandler, PollHandler
 from handlers import (
     start, quizz_set, quizz_start, leaderboard, leaderboard_reset,
-    done, close, handle_message, handle_poll_answer
+    done, close, handle_message, handle_poll_answer, handle_poll
 )
 from database import init_db
 from config import Config
@@ -33,6 +33,7 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     # Poll handlers
+    application.add_handler(PollHandler(handle_poll))
     application.add_handler(PollAnswerHandler(handle_poll_answer))
     
     # Start the bot
