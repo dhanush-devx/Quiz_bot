@@ -64,13 +64,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_poll(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle incoming polls during quiz creation"""
+    import logging
+    logging.info("handle_poll called")
     state = context.user_data.get('state')
+    logging.info(f"Current state: {state}")
     quiz_data = context.user_data.get('quiz_creation', {})
     
     if state != AWAITING_QUESTION:
+        logging.info("Not in AWAITING_QUESTION state, ignoring poll")
         return
     
     poll = update.poll
+    logging.info(f"Received poll: {poll.question}")
     if poll.type != "regular" or not poll.options:
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
