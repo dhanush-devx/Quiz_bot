@@ -227,18 +227,23 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         new_quiz = Quiz(
             title=quiz_data['title'],
-            description=quiz_data.get('description', ''),
             group_id=str(update.effective_chat.id),
-            questions=quiz_data['questions']
+            questions=quiz_data['questions'],
+            time_limit=quiz_data.get('time_limit', 10),
+            shuffle=quiz_data.get('shuffle', False),
+            is_active=True
         )
         session.add(new_quiz)
         session.commit()
         await update.message.reply_text(
-            f"🎉 Quiz created successfully! ID: {new_quiz.id}\n"
+            f"👍 Quiz created successfully! ID: {new_quiz.id}\n"
             f"Title: {quiz_data['title']}\n"
-            f"Questions: {len(quiz_data['questions'])}"
+            f"Questions: {len(quiz_data['questions'])}\n"
+            f"Time limit: {new_quiz.time_limit} seconds\n"
+            f"Shuffle: {'Yes' if new_quiz.shuffle else 'No'}"
         )
     except Exception as e:
+        import logging
         logging.error(f"Quiz creation failed: {e}")
         await update.message.reply_text("❌ Failed to save quiz.")
     finally:
