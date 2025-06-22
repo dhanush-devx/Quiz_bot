@@ -53,7 +53,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📝 Enter quiz description or /skip:")
     
     elif state == AWAITING_DESCRIPTION:
-        if update.message.text == "/skip":
+        if update.message.text == "/skip" or not update.message.text or update.message.text.lower() == "null":
             quiz_data['description'] = ""
         else:
             quiz_data['description'] = update.message.text
@@ -110,10 +110,10 @@ async def handle_poll(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     poll = update.poll
     logging.info(f"Received poll: {poll.question}")
-    if poll.type != "regular" or not poll.options:
+    if poll.type not in ["regular", "quiz"] or not poll.options:
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text="⚠️ Only regular polls with options are supported."
+            text="⚠️ Only regular or quiz polls with options are supported."
         )
         return
     
