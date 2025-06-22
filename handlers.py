@@ -49,9 +49,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if state == AWAITING_TITLE:
         quiz_data['title'] = update.message.text
-    context.user_data['state'] = AWAITING_DESCRIPTION
-    # Removed description prompt as per user request
-    # await update.message.reply_text("📝 Enter quiz description or /skip:")
+        context.user_data['state'] = AWAITING_DESCRIPTION
+        # Removed description prompt as per user request
+        # await update.message.reply_text("📝 Enter quiz description or /skip:")
     
     elif state == AWAITING_DESCRIPTION:
         # Removed description step fully as per user request
