@@ -96,6 +96,10 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ No active quiz creation")
         return
     
+    if not quiz_data.get('questions'):
+        await update.message.reply_text("❌ No questions added to the quiz")
+        return
+    
     session = Session()
     try:
         new_quiz = Quiz(
@@ -108,7 +112,7 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"🎉 Quiz created! ID: {new_quiz.id}\n"
             f"Use /start_quiz {new_quiz.id} in your group\n"
-            f"Or use this link to start the quiz: https://t.me/YourBotUsername?start={new_quiz.id}"
+            f"Or use this link to start the quiz: https://t.me/StellarQuiz_bot?start={new_quiz.id}"
         )
     finally:
         session.close()
