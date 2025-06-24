@@ -14,7 +14,6 @@ redis_client = redis.Redis(
 
 # Quiz creation states
 AWAITING_TITLE = 1
-AWAITING_DESCRIPTION = 2
 AWAITING_QUESTION = 3
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -50,16 +49,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if state == AWAITING_TITLE:
         quiz_data['title'] = update.message.text
-        context.user_data['state'] = AWAITING_DESCRIPTION
-        await update.message.reply_text("📝 Enter quiz description:")
-    
-    elif state == AWAITING_DESCRIPTION:
-        # Remove description handling, skip to next state
+        # Skip description prompt as per user request
         context.user_data['state'] = AWAITING_QUESTION
         await update.message.reply_text(
             "📝 Create a poll with options and mark the correct answer.\n"
             "After creating the poll, forward it to me."
         )
+    
     
     
     
