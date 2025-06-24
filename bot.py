@@ -1,8 +1,8 @@
 import logging
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, PollAnswerHandler, PollHandler
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, PollAnswerHandler
 from handlers import (
-    start, quizz_set, quizz_start, leaderboard, leaderboard_reset,
-    done, close, handle_message, handle_poll_answer, handle_poll, undo
+    start, create_quiz, done, start_quiz, 
+    leaderboard, reset_leaderboard, handle_message, handle_poll_answer
 )
 from database import init_db
 from config import Config
@@ -17,27 +17,22 @@ logging.basicConfig(
 )
 
 def main():
-    # Create application
     application = ApplicationBuilder().token(Config.BOT_TOKEN).build()
     
-    # Register handlers
+    # Command handlers
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("quizz_set", quizz_set))
+    application.add_handler(CommandHandler("create_quiz", create_quiz))
     application.add_handler(CommandHandler("done", done))
-    application.add_handler(CommandHandler("undo", undo))
-    application.add_handler(CommandHandler("close", close))
-    application.add_handler(CommandHandler("quizz_start", quizz_start))
+    application.add_handler(CommandHandler("start_quiz", start_quiz))
     application.add_handler(CommandHandler("leaderboard", leaderboard))
-    application.add_handler(CommandHandler("leaderboard_reset", leaderboard_reset))
+    application.add_handler(CommandHandler("reset_leaderboard", reset_leaderboard))
     
     # Message handlers
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     # Poll handlers
-    application.add_handler(PollHandler(handle_poll))
     application.add_handler(PollAnswerHandler(handle_poll_answer))
     
-    # Start the bot
     application.run_polling()
 
 if __name__ == "__main__":
