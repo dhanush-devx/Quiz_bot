@@ -62,6 +62,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     
     
+    
     elif state == AWAITING_QUESTION:
         if update.message.poll:
             poll = update.message.poll
