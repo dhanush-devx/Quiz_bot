@@ -137,7 +137,7 @@ async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def _send_question(update, context, quiz, q_index):
     """Send question as poll to group"""
     question = quiz.questions[q_index]
-    await context.bot.send_poll(
+    message = await context.bot.send_poll(
         chat_id=update.effective_chat.id,
         question=question["q"],
         options=question["o"],
@@ -147,6 +147,9 @@ async def _send_question(update, context, quiz, q_index):
     )
     # Store current question index
     redis_client.set(f"quiz_progress:{quiz.id}:{update.effective_chat.id}", q_index)
+    # Store poll id to chat id mapping for answer handling
+    poll_id = message.poll.id
+    redis_client.set(f"poll:{poll_id}", update.effective_chat.id)
 
 async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Process poll answers and update leaderboard"""
