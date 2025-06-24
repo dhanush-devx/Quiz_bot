@@ -54,11 +54,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "📝 Create a poll with options and mark the correct answer.\n"
             "After creating the poll, forward it to me."
-        )
-    
-    
-    
-    
+        )    
     elif state == AWAITING_QUESTION:
         if update.message.poll:
             poll = update.message.poll
@@ -73,8 +69,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "a": poll.correct_option_id
             })
             await update.message.reply_text(
-                f"✅ Question added! Total: {len(quiz_data['questions'])}\n"
-                "Send /done to finish or create another poll."
+                "Do you want to add more questions (polls) or send /done to finish?"
             )
 
 async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
