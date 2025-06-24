@@ -54,12 +54,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📝 Enter quiz description:")
     
     elif state == AWAITING_DESCRIPTION:
-        quiz_data['description'] = update.message.text
+        # Remove description handling, skip to next state
         context.user_data['state'] = AWAITING_QUESTION
         await update.message.reply_text(
             "📝 Create a poll with options and mark the correct answer.\n"
             "After creating the poll, forward it to me."
         )
+    
     
     elif state == AWAITING_QUESTION:
         if update.message.poll:
@@ -94,7 +95,6 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         new_quiz = Quiz(
             title=quiz_data['title'],
-            description=quiz_data.get('description', ''),
             questions=quiz_data['questions']
         )
         session.add(new_quiz)
