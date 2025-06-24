@@ -107,7 +107,8 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         session.commit()
         await update.message.reply_text(
             f"🎉 Quiz created! ID: {new_quiz.id}\n"
-            f"Use /start_quiz {new_quiz.id} in your group"
+            f"Use /start_quiz {new_quiz.id} in your group\n"
+            f"Or use this link to start the quiz: https://t.me/YourBotUsername?start={new_quiz.id}"
         )
     finally:
         session.close()
