@@ -95,6 +95,7 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         new_quiz = Quiz(
             title=quiz_data['title'],
+            # Removed is_active field as per user request
             questions=quiz_data['questions']
         )
         session.add(new_quiz)

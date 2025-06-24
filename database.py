@@ -11,7 +11,8 @@ class Quiz(Base):
     id = Column(Integer, primary_key=True)
     title = Column(String(255), nullable=False)
     group_id = Column(String(50))
-    is_active = Column(Boolean, default=True)
+    # Removed is_active column as per user request
+    # is_active = Column(Boolean, default=True)
     questions = Column(JSON, nullable=False)  # Format: [{"q": "text", "o": ["A","B"], "a": 0}]
 
 class Leaderboard(Base):
