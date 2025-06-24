@@ -10,7 +10,7 @@ class Quiz(Base):
     __tablename__ = 'quizzes'
     id = Column(Integer, primary_key=True)
     title = Column(String(255), nullable=False)
-    group_id = Column(String(50))
+    group_id = Column(String(50), nullable=True)
     # Removed is_active column as per user request
     # is_active = Column(Boolean, default=True)
     questions = Column(JSON, nullable=False)  # Format: [{"q": "text", "o": ["A","B"], "a": 0}]
