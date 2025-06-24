@@ -52,25 +52,38 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Skip description prompt as per user request
         context.user_data['state'] = AWAITING_QUESTION
         await update.message.reply_text(
-            "📝 Create a poll with options and mark the correct answer.\n"
-            "After creating the poll, forward it to me."
+            "📝 Create a quiz-mode poll directly (not forward) with options and a correct answer.\n"
+            "Send /done when finished."
         )    
     elif state == AWAITING_QUESTION:
-        if update.message.poll:
-            poll = update.message.poll
-            if poll.type != "regular" or not poll.options:
-                await update.message.reply_text("⚠️ Only regular polls with options supported")
-                return
-            
-            # Store question
-            quiz_data['questions'].append({
-                "q": poll.question,
-                "o": [option.text for option in poll.options],
-                "a": poll.correct_option_id
-            })
+        if update.message.text and update.message.text.lower() in ["/done", "done"]:
+            # User finished quiz creation
+            await done(update, context)
+        else:
             await update.message.reply_text(
-                "Do you want to add more questions (polls) or send /done to finish?"
+                "Please send a poll question in quiz mode or send /done to finish."
             )
+
+async def handle_poll_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle poll input for quiz creation"""
+    state = context.user_data.get('state')
+    if state != AWAITING_QUESTION:
+        return
+
+    poll = update.poll or update.message.poll
+    if not poll:
+        return
+
+    quiz_data = context.user_data.get('quiz_creation', {})
+    quiz_data['questions'].append({
+        "q": poll.question,
+        "o": [option.text for option in poll.options],
+        "a": poll.correct_option_id
+    })
+
+    await update.message.reply_text(
+        "✅ Poll added.\nSend another or /done to finish."
+    )
 
 async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Finalize quiz creation"""

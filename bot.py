@@ -29,6 +29,7 @@ def main():
     
     # Message handlers
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_handler(MessageHandler(filters.POLL, handle_poll_message))
     
     # Poll handlers
     application.add_handler(PollAnswerHandler(handle_poll_answer))
