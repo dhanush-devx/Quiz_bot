@@ -2,7 +2,7 @@ import logging
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, PollAnswerHandler
 from handlers import (
     start, create_quiz, done, start_quiz, 
-    leaderboard, reset_leaderboard, handle_message, handle_poll_answer
+    leaderboard, reset_leaderboard, handle_message, handle_poll_answer, handle_poll_message
 )
 from database import init_db
 from config import Config
