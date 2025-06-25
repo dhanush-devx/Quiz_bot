@@ -138,6 +138,10 @@ async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Quiz not found")
             return
         
+        # Update quiz group_id with current chat id
+        quiz.group_id = str(update.effective_chat.id)
+        session.commit()
+        
         # Store active quiz in Redis
         redis_client.set(f"active_quiz:{update.effective_chat.id}", quiz_id)
         
