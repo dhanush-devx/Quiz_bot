@@ -4,6 +4,8 @@ from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, 
 from database import Session, Quiz, Leaderboard
 from config import Config
 import redis
+from enum import IntEnum
+from functools import wraps
 
 # Redis connection
 redis_client = redis.Redis(
@@ -12,9 +14,26 @@ redis_client = redis.Redis(
     db=Config.REDIS_DB
 )
 
-# Quiz creation states
-AWAITING_TITLE = 1
-AWAITING_QUESTION = 3
+# --- Redis Key Utilities ---
+def redis_key_active_quiz(chat_id): return f"active_quiz:{chat_id}"
+def redis_key_poll_mapping(poll_id): return f"poll:{poll_id}"
+def redis_key_progress(quiz_id, chat_id): return f"quiz_progress:{quiz_id}:{chat_id}"
+def redis_key_leaderboard(quiz_id): return f"leaderboard:{quiz_id}"
+
+# --- Quiz State Enum ---
+class QuizState(IntEnum):
+    AWAITING_TITLE = 1
+    AWAITING_QUESTION = 2
+
+# --- Admin Decorator ---
+def admin_required(func):
+    @wraps(func)
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+        if not await _is_admin(update):
+            await update.message.reply_text("⛔️ Admin access required!")
+            return
+        return await func(update, context, *args, **kwargs)
+    return wrapper
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send welcome message"""
@@ -28,36 +47,41 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "→ /leaderboard - View rankings"
     )
 
+@admin_required
 async def create_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Initiate quiz creation in private chat"""
-    if update.effective_chat.type != "private":
-        await update.message.reply_text("⚠️ Quiz creation only available in private chat with bot")
+    if not (update and hasattr(update, 'message') and update.message and hasattr(update, 'effective_chat') and update.effective_chat and update.effective_chat.type == "private"):
+        if hasattr(update, 'message') and update.message:
+            await update.message.reply_text("⚠️ Quiz creation only available in private chat with bot")
         return
-    
-    if not await _is_admin(update):
-        await update.message.reply_text("⛔️ Admin access required!")
-        return
-    
+    if not hasattr(context, 'user_data') or not isinstance(context.user_data, dict):
+        context.user_data = {}
     context.user_data['quiz_creation'] = {'questions': []}
-    context.user_data['state'] = AWAITING_TITLE
+    context.user_data['state'] = QuizState.AWAITING_TITLE
     await update.message.reply_text("📝 Enter quiz title:")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle quiz creation states"""
+    if not (update and hasattr(update, 'message') and update.message and hasattr(update.message, 'text') and update.message.text is not None):
+        return
+    if not hasattr(context, 'user_data') or not isinstance(context.user_data, dict):
+        context.user_data = {}
     state = context.user_data.get('state')
-    quiz_data = context.user_data.get('quiz_creation', {})
-    
-    if state == AWAITING_TITLE:
+    quiz_data = context.user_data.get('quiz_creation')
+    if not isinstance(quiz_data, dict):
+        quiz_data = {'questions': []}
+        context.user_data['quiz_creation'] = quiz_data
+    if 'questions' not in quiz_data or not isinstance(quiz_data['questions'], list):
+        quiz_data['questions'] = []
+    if state == QuizState.AWAITING_TITLE:
         quiz_data['title'] = update.message.text
-        # Skip description prompt as per user request
-        context.user_data['state'] = AWAITING_QUESTION
+        context.user_data['state'] = QuizState.AWAITING_QUESTION
         await update.message.reply_text(
             "📝 Create a quiz-mode poll directly (not forward) with options and a correct answer.\n"
             "Send /done when finished."
         )    
-    elif state == AWAITING_QUESTION:
+    elif state == QuizState.AWAITING_QUESTION:
         if update.message.text and update.message.text.lower() in ["/done", "done"]:
-            # User finished quiz creation
             await done(update, context)
         else:
             await update.message.reply_text(
@@ -66,15 +90,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_poll_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle poll input for quiz creation"""
+    if not (update and hasattr(update, 'message') and update.message and hasattr(update, 'effective_chat') and update.effective_chat):
+        return
+    if not hasattr(context, 'user_data') or not isinstance(context.user_data, dict):
+        context.user_data = {}
     state = context.user_data.get('state')
-    if state != AWAITING_QUESTION:
+    quiz_data = context.user_data.get('quiz_creation')
+    if not isinstance(quiz_data, dict):
+        quiz_data = {'questions': []}
+        context.user_data['quiz_creation'] = quiz_data
+    if 'questions' not in quiz_data or not isinstance(quiz_data['questions'], list):
+        quiz_data['questions'] = []
+    if state != QuizState.AWAITING_QUESTION:
         return
 
-    poll = update.poll or update.message.poll
+    poll = getattr(update, 'poll', None) or getattr(update.message, 'poll', None)
     if not poll:
         return
 
-    quiz_data = context.user_data.get('quiz_creation', {})
     quiz_data['questions'].append({
         "q": poll.question,
         "o": [option.text for option in poll.options],
@@ -85,18 +118,19 @@ async def handle_poll_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         "✅ Poll added.\nSend another or /done to finish."
     )
 
+@admin_required
 async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Finalize quiz creation"""
-    if not await _is_admin(update):
-        await update.message.reply_text("⛔️ Admin access required!")
+    if not (update and hasattr(update, 'message') and update.message):
         return
-    
+    if not hasattr(context, 'user_data') or not isinstance(context.user_data, dict):
+        context.user_data = {}
     quiz_data = context.user_data.get('quiz_creation')
-    if not quiz_data or 'title' not in quiz_data:
+    if not isinstance(quiz_data, dict) or 'title' not in quiz_data:
         await update.message.reply_text("❌ No active quiz creation")
         return
     
-    if not quiz_data.get('questions'):
+    if 'questions' not in quiz_data or not isinstance(quiz_data['questions'], list) or not quiz_data['questions']:
         await update.message.reply_text("❌ No questions added to the quiz")
         return
     
@@ -104,28 +138,27 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         new_quiz = Quiz(
             title=quiz_data['title'],
-            group_id=None,
-            # Removed is_active field as per user request
             questions=quiz_data['questions']
         )
         session.add(new_quiz)
         session.commit()
+        bot_username = (await context.bot.get_me()).username
+        quiz_link = f"https://t.me/{bot_username}?start={new_quiz.id}"
         await update.message.reply_text(
             f"🎉 Quiz created! ID: {new_quiz.id}\n"
             f"Use /start_quiz {new_quiz.id} in your group\n"
-            f"Or use this link to start the quiz: https://t.me/YourBotUsername?start={new_quiz.id}"
+            f"Or use this link to start the quiz: {quiz_link}"
         )
     finally:
         session.close()
         context.user_data.pop('quiz_creation', None)
         context.user_data.pop('state', None)
 
+@admin_required
 async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Start quiz in group"""
-    if not await _is_admin(update):
-        await update.message.reply_text("⛔️ Admin access required!")
+    if not (update and hasattr(update, 'effective_chat') and update.effective_chat and hasattr(update, 'message') and update.message):
         return
-    
     if not context.args:
         await update.message.reply_text("ℹ️ Usage: /start_quiz <quiz_id>")
         return
@@ -138,20 +171,17 @@ async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Quiz not found")
             return
         
-        # Update quiz group_id with current chat id
-        quiz.group_id = str(update.effective_chat.id)
-        session.commit()
+        chat_id = update.effective_chat.id
+        redis_client.set(redis_key_active_quiz(chat_id), quiz_id)
         
-        # Store active quiz in Redis
-        redis_client.set(f"active_quiz:{update.effective_chat.id}", quiz_id)
-        
-        # Send first question
         await _send_question(update, context, quiz, 0)
     finally:
         session.close()
 
 async def _send_question(update, context, quiz, q_index):
     """Send question as poll to group"""
+    if not (update and hasattr(update, 'effective_chat') and update.effective_chat):
+        return
     question = quiz.questions[q_index]
     message = await context.bot.send_poll(
         chat_id=update.effective_chat.id,
@@ -161,33 +191,30 @@ async def _send_question(update, context, quiz, q_index):
         correct_option_id=question["a"],
         is_anonymous=False
     )
-    # Store current question index
-    redis_client.set(f"quiz_progress:{quiz.id}:{update.effective_chat.id}", q_index)
-    # Store poll id to chat id mapping for answer handling
+    chat_id = update.effective_chat.id
+    redis_client.set(redis_key_progress(quiz.id, chat_id), q_index)
     poll_id = message.poll.id
-    redis_client.set(f"poll:{poll_id}", update.effective_chat.id)
+    redis_client.set(redis_key_poll_mapping(poll_id), chat_id)
 
 async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Process poll answers and update leaderboard"""
     answer = update.poll_answer
     user_id = str(answer.user.id)
-    chat_id = redis_client.get(f"poll:{answer.poll_id}")
+    chat_id = redis_client.get(redis_key_poll_mapping(answer.poll_id))
     
     if not chat_id:
         return
     
-    quiz_id = redis_client.get(f"active_quiz:{chat_id}")
+    quiz_id = redis_client.get(redis_key_active_quiz(chat_id))
     if not quiz_id:
         return
     
     session = Session()
     try:
-        # Get current question index
-        q_index = int(redis_client.get(f"quiz_progress:{quiz_id}:{chat_id}") or 0)
+        q_index = int(redis_client.get(redis_key_progress(quiz_id, chat_id)) or 0)
         quiz = session.query(Quiz).filter_by(id=quiz_id).first()
         
         if answer.option_ids[0] == quiz.questions[q_index]["a"]:
-            # Update leaderboard
             lb = session.query(Leaderboard).filter_by(quiz_id=quiz_id).first()
             if not lb:
                 lb = Leaderboard(quiz_id=quiz_id, user_scores={})
@@ -195,21 +222,30 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
             
             lb.user_scores[user_id] = lb.user_scores.get(user_id, 0) + 1
             session.commit()
-            redis_client.delete(f"leaderboard:{quiz_id}")
+            redis_client.delete(redis_key_leaderboard(quiz_id))
+        q_index += 1
+        if q_index < len(quiz.questions):
+            redis_client.set(redis_key_progress(quiz_id, chat_id), q_index)
+            await _send_question(update, context, quiz, q_index)
+        else:
+            await context.bot.send_message(chat_id=int(chat_id), text="✅ Quiz completed!")
+            redis_client.delete(redis_key_progress(quiz_id, chat_id))
+            redis_client.delete(redis_key_active_quiz(chat_id))
     finally:
         session.close()
 
 async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show leaderboard in group"""
+    if not (update and hasattr(update, 'effective_chat') and update.effective_chat and hasattr(update, 'message') and update.message):
+        return
     chat_id = update.effective_chat.id
-    quiz_id = redis_client.get(f"active_quiz:{chat_id}")
+    quiz_id = redis_client.get(redis_key_active_quiz(chat_id))
     
     if not quiz_id:
         await update.message.reply_text("ℹ️ No active quiz in this group")
         return
     
-    # Check cache
-    cache_key = f"leaderboard:{quiz_id}"
+    cache_key = redis_key_leaderboard(quiz_id)
     cached = redis_client.get(cache_key)
     if cached:
         await update.message.reply_text(cached.decode())
@@ -222,24 +258,27 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("📊 No scores yet!")
             return
         
-        # Format leaderboard
         sorted_scores = sorted(lb.user_scores.items(), key=lambda x: x[1], reverse=True)
-        leaderboard_text = "🏆 **Leaderboard** 🏆\n\n" + "\n".join(
-            [f"{idx+1}. User {uid}: {score}" for idx, (uid, score) in enumerate(sorted_scores[:10])]
-        )
+        leaderboard_lines = ["🏆 **Leaderboard** 🏆\n"]
+        for idx, (uid, score) in enumerate(sorted_scores[:10]):
+            try:
+                member = await context.bot.get_chat_member(chat_id, int(uid))
+                name = member.user.full_name or f"User {uid}"
+            except Exception:
+                name = f"User {uid}"
+            leaderboard_lines.append(f"{idx+1}. {name}: {score}")
+        leaderboard_text = "\n".join(leaderboard_lines)
         
-        # Cache for 10 minutes
         redis_client.setex(cache_key, 600, leaderboard_text)
         await update.message.reply_text(leaderboard_text)
     finally:
         session.close()
 
+@admin_required
 async def reset_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Reset leaderboard (admin only)"""
-    if not await _is_admin(update):
-        await update.message.reply_text("⛔️ Admin access required!")
+    if not (update and hasattr(update, 'message') and update.message):
         return
-    
     quiz_id = context.args[0] if context.args else None
     if not quiz_id:
         await update.message.reply_text("ℹ️ Usage: /reset_leaderboard <quiz_id>")
@@ -251,7 +290,7 @@ async def reset_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if lb:
             lb.user_scores = {}
             session.commit()
-        redis_client.delete(f"leaderboard:{quiz_id}")
+        redis_client.delete(redis_key_leaderboard(quiz_id))
         await update.message.reply_text(f"✅ Leaderboard for quiz {quiz_id} reset!")
     finally:
         session.close()
