@@ -104,6 +104,7 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         new_quiz = Quiz(
             title=quiz_data['title'],
+            group_id=None,
             # Removed is_active field as per user request
             questions=quiz_data['questions']
         )
@@ -112,7 +113,7 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"🎉 Quiz created! ID: {new_quiz.id}\n"
             f"Use /start_quiz {new_quiz.id} in your group\n"
-            f"Or use this link to start the quiz: https://t.me/StellarQuiz_bot?start={new_quiz.id}"
+            f"Or use this link to start the quiz: https://t.me/YourBotUsername?start={new_quiz.id}"
         )
     finally:
         session.close()
