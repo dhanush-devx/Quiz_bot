@@ -1,6 +1,5 @@
 import logging
-from tele
-gram import Update, InlineKeyboardMarkup, InlineKeyboardButton, Poll
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, Poll
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, PollAnswerHandler
 from database import Session, Quiz, Leaderboard
 from config import Config
