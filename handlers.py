@@ -163,7 +163,7 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         safe_quiz_id = escape_md_v2(str(quiz_id))
         safe_quiz_link = escape_md_v2(quiz_link)
         await update.message.reply_text(
-            f"🎉 Quiz created successfully!\\!\n\n"
+            f"🎉 Quiz created successfully!\n\n"
             f"*ID:* `{safe_quiz_id}`\n\n"
             f"To start it in a group, use the command:\n"
             f"`/start_quiz {safe_quiz_id}`\n\n"
