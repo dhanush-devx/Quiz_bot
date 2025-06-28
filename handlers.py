@@ -144,7 +144,8 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         new_quiz = Quiz(
             title=quiz_data['title'],
-            questions=quiz_data['questions']
+            questions=quiz_data['questions'],
+            group_id=None  # Set group_id to None to avoid NOT NULL constraint error
         )
         session.add(new_quiz)
         session.commit()
@@ -153,13 +154,16 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         bot_username = (await context.bot.get_me()).username
         quiz_link = f"https://t.me/{bot_username}?start={quiz_id}"
         
+        # Fix Markdown parsing error by escaping backticks or using MarkdownV2
+        safe_quiz_id = str(quiz_id).replace('_', '\\_')
+        safe_quiz_link = quiz_link.replace('_', '\\_')
         await update.message.reply_text(
             f"🎉 Quiz created successfully!\n\n"
-            f"**ID:** `{quiz_id}`\n\n"
+            f"*ID:* `{safe_quiz_id}`\n\n"
             f"To start it in a group, use the command:\n"
-            f"`/start_quiz {quiz_id}`\n\n"
-            f"Alternatively, you can use this direct link:\n{quiz_link}",
-            parse_mode='Markdown'
+            f"`/start_quiz {safe_quiz_id}`\n\n"
+            f"Alternatively, you can use this direct link:\n{safe_quiz_link}",
+            parse_mode='MarkdownV2'
         )
     except Exception as e:
         logging.error(f"Error saving quiz to database: {e}")
