@@ -154,9 +154,13 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         bot_username = (await context.bot.get_me()).username
         quiz_link = f"https://t.me/{bot_username}?start={quiz_id}"
         
-        # Fix Markdown parsing error by escaping backticks or using MarkdownV2
-        safe_quiz_id = str(quiz_id).replace('_', '\\_')
-        safe_quiz_link = quiz_link.replace('_', '\\_')
+        # Fix Markdown parsing error by escaping special characters for MarkdownV2
+        def escape_md_v2(text):
+            escape_chars = r'_*[]()~`>#+-=|{}.!'
+            return ''.join('\\' + c if c in escape_chars else c for c in text)
+
+        safe_quiz_id = escape_md_v2(str(quiz_id))
+        safe_quiz_link = escape_md_v2(quiz_link)
         await update.message.reply_text(
             f"🎉 Quiz created successfully!\n\n"
             f"*ID:* `{safe_quiz_id}`\n\n"
