@@ -1,5 +1,6 @@
 import logging
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, Poll
+from tele
+gram import Update, InlineKeyboardMarkup, InlineKeyboardButton, Poll
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, PollAnswerHandler
 from database import Session, Quiz, Leaderboard
 from config import Config
@@ -104,8 +105,14 @@ async def handle_poll_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     if state != QuizState.AWAITING_QUESTION:
         return
 
-    poll = getattr(update, 'poll', None) or getattr(update.message, 'poll', None)
+    poll = update.message.poll
     if not poll:
+        return
+
+    if poll.type != Poll.QUIZ or poll.correct_option_id is None:
+        await update.message.reply_text(
+            "⚠️ That's not a quiz poll! Please create a poll in **Quiz Mode** and select a correct answer."
+        )
         return
 
     quiz_data['questions'].append({
@@ -127,11 +134,11 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data = {}
     quiz_data = context.user_data.get('quiz_creation')
     if not isinstance(quiz_data, dict) or 'title' not in quiz_data:
-        await update.message.reply_text("❌ No active quiz creation")
+        await update.message.reply_text("❌ No active quiz creation process found. Please start with /create_quiz.")
         return
     
     if 'questions' not in quiz_data or not isinstance(quiz_data['questions'], list) or not quiz_data['questions']:
-        await update.message.reply_text("❌ No questions added to the quiz")
+        await update.message.reply_text("❌ Your quiz has no questions. Please add at least one poll question before sending /done.")
         return
     
     session = Session()
@@ -142,13 +149,23 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         session.add(new_quiz)
         session.commit()
+        
+        quiz_id = new_quiz.id
         bot_username = (await context.bot.get_me()).username
-        quiz_link = f"https://t.me/{bot_username}?start={new_quiz.id}"
+        quiz_link = f"https://t.me/{bot_username}?start={quiz_id}"
+        
         await update.message.reply_text(
-            f"🎉 Quiz created! ID: {new_quiz.id}\n"
-            f"Use /start_quiz {new_quiz.id} in your group\n"
-            f"Or use this link to start the quiz: {quiz_link}"
+            f"🎉 Quiz created successfully!\n\n"
+            f"**ID:** `{quiz_id}`\n\n"
+            f"To start it in a group, use the command:\n"
+            f"`/start_quiz {quiz_id}`\n\n"
+            f"Alternatively, you can use this direct link:\n{quiz_link}",
+            parse_mode='Markdown'
         )
+    except Exception as e:
+        logging.error(f"Error saving quiz to database: {e}")
+        await update.message.reply_text("❌ An error occurred while saving your quiz. Please try again later.")
+        session.rollback()
     finally:
         session.close()
         context.user_data.pop('quiz_creation', None)

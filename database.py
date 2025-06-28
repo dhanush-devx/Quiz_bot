@@ -11,6 +11,7 @@ class Quiz(Base):
     id = Column(Integer, primary_key=True)
     title = Column(String(255), nullable=False)
     questions = Column(JSON, nullable=False)  # Format: [{"q": "text", "o": ["A","B"], "a": 0}]
+    group_id = Column(Integer, nullable=True)  # Added nullable group_id column
 
 
 class Leaderboard(Base):

@@ -1,0 +1,95 @@
+Instance created. Preparing to start...
+Starting download for registry01.prod.koyeb.com/k-9e81fd6d-beb6-4299-9b2f-6a08a4e2c7e4/dac1c7b3-9c69-40ff-8da3-3050c2ba7909:96a0b053-6d27-4094-9ce8-1ba6e7c2fe97
+Download progress: 100% |[32m++++++++[0m| (7.1 MiB/s)
+Download complete for registry01.prod.koyeb.com/k-9e81fd6d-beb6-4299-9b2f-6a08a4e2c7e4/dac1c7b3-9c69-40ff-8da3-3050c2ba7909:96a0b053-6d27-4094-9ce8-1ba6e7c2fe97
+2025-06-28 01:58:03,859 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8187052777:AAGUmozz_nvFrtItvpOWasMNfNzdOfo9gZc/getMe "HTTP/1.1 200 OK"
+2025-06-28 01:58:03,961 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8187052777:AAGUmozz_nvFrtItvpOWasMNfNzdOfo9gZc/deleteWebhook "HTTP/1.1 200 OK"
+2025-06-28 01:58:03,963 - telegram.ext.Application - INFO - Application started
+Instance is starting... Waiting for health checks to pass.
+2025-06-28 01:58:14,510 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8187052777:AAGUmozz_nvFrtItvpOWasMNfNzdOfo9gZc/getUpdates "HTTP/1.1 200 OK"
+2025-06-28 01:58:24,619 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8187052777:AAGUmozz_nvFrtItvpOWasMNfNzdOfo9gZc/getUpdates "HTTP/1.1 200 OK"
+2025-06-28 01:58:34,719 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8187052777:AAGUmozz_nvFrtItvpOWasMNfNzdOfo9gZc/getUpdates "HTTP/1.1 200 OK"
+2025-06-28 01:58:44,818 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8187052777:AAGUmozz_nvFrtItvpOWasMNfNzdOfo9gZc/getUpdates "HTTP/1.1 200 OK"
+2025-06-28 01:58:54,918 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8187052777:AAGUmozz_nvFrtItvpOWasMNfNzdOfo9gZc/getUpdates "HTTP/1.1 200 OK"
+2025-06-28 01:59:05,021 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8187052777:AAGUmozz_nvFrtItvpOWasMNfNzdOfo9gZc/getUpdates "HTTP/1.1 200 OK"
+2025-06-28 01:59:10,438 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8187052777:AAGUmozz_nvFrtItvpOWasMNfNzdOfo9gZc/getUpdates "HTTP/1.1 200 OK"
+2025-06-28 01:59:10,913 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8187052777:AAGUmozz_nvFrtItvpOWasMNfNzdOfo9gZc/sendMessage "HTTP/1.1 200 OK"
+2025-06-28 01:59:15,906 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8187052777:AAGUmozz_nvFrtItvpOWasMNfNzdOfo9gZc/getUpdates "HTTP/1.1 200 OK"
+2025-06-28 01:59:16,183 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8187052777:AAGUmozz_nvFrtItvpOWasMNfNzdOfo9gZc/sendMessage "HTTP/1.1 200 OK"
+2025-06-28 01:59:26,007 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8187052777:AAGUmozz_nvFrtItvpOWasMNfNzdOfo9gZc/getUpdates "HTTP/1.1 200 OK"
+2025-06-28 01:59:30,178 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8187052777:AAGUmozz_nvFrtItvpOWasMNfNzdOfo9gZc/getUpdates "HTTP/1.1 200 OK"
+2025-06-28 01:59:30,651 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8187052777:AAGUmozz_nvFrtItvpOWasMNfNzdOfo9gZc/sendMessage "HTTP/1.1 200 OK"
+2025-06-28 01:59:32,069 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8187052777:AAGUmozz_nvFrtItvpOWasMNfNzdOfo9gZc/getUpdates "HTTP/1.1 200 OK"
+2025-06-28 01:59:32,344 - telegram.ext.Application - ERROR - No error handlers are registered, logging exception.
+Traceback (most recent call last):
+  File "/workspace/.heroku/python/lib/python3.10/site-packages/sqlalchemy/engine/base.py", line 1965, in _exec_single_context
+    self.dialect.do_execute(
+  File "/workspace/.heroku/python/lib/python3.10/site-packages/sqlalchemy/engine/default.py", line 921, in do_execute
+    cursor.execute(statement, parameters)
+psycopg2.errors.NotNullViolation: null value in column "group_id" of relation "quizzes" violates not-null constraint
+DETAIL:  Failing row contains (13, first, [{"q": "erere", "o": ["erere", "rerere", "rerer", "ere"], "a": 0..., null).
+
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/workspace/.heroku/python/lib/python3.10/site-packages/telegram/ext/_application.py", line 1124, in process_update
+    await coroutine
+  File "/workspace/.heroku/python/lib/python3.10/site-packages/telegram/ext/_handler.py", line 141, in handle_update
+    return await self.callback(update, context)
+  File "/workspace/handlers.py", line 35, in wrapper
+    return await func(update, context, *args, **kwargs)
+  File "/workspace/handlers.py", line 144, in done
+    session.commit()
+  File "/workspace/.heroku/python/lib/python3.10/site-packages/sqlalchemy/orm/session.py", line 1920, in commit
+    trans.commit(_to_root=True)
+  File "<string>", line 2, in commit
+  File "/workspace/.heroku/python/lib/python3.10/site-packages/sqlalchemy/orm/state_changes.py", line 139, in _go
+    ret_value = fn(self, *arg, **kw)
+  File "/workspace/.heroku/python/lib/python3.10/site-packages/sqlalchemy/orm/session.py", line 1236, in commit
+    self._prepare_impl()
+  File "<string>", line 2, in _prepare_impl
+  File "/workspace/.heroku/python/lib/python3.10/site-packages/sqlalchemy/orm/state_changes.py", line 139, in _go
+    ret_value = fn(self, *arg, **kw)
+  File "/workspace/.heroku/python/lib/python3.10/site-packages/sqlalchemy/orm/session.py", line 1211, in _prepare_impl
+    self.session.flush()
+  File "/workspace/.heroku/python/lib/python3.10/site-packages/sqlalchemy/orm/session.py", line 4163, in flush
+    self._flush(objects)
+  File "/workspace/.heroku/python/lib/python3.10/site-packages/sqlalchemy/orm/session.py", line 4298, in _flush
+    with util.safe_reraise():
+  File "/workspace/.heroku/python/lib/python3.10/site-packages/sqlalchemy/util/langhelpers.py", line 147, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/workspace/.heroku/python/lib/python3.10/site-packages/sqlalchemy/orm/session.py", line 4259, in _flush
+    flush_context.execute()
+  File "/workspace/.heroku/python/lib/python3.10/site-packages/sqlalchemy/orm/unitofwork.py", line 466, in execute
+    rec.execute(self)
+  File "/workspace/.heroku/python/lib/python3.10/site-packages/sqlalchemy/orm/unitofwork.py", line 642, in execute
+    util.preloaded.orm_persistence.save_obj(
+  File "/workspace/.heroku/python/lib/python3.10/site-packages/sqlalchemy/orm/persistence.py", line 93, in save_obj
+    _emit_insert_statements(
+  File "/workspace/.heroku/python/lib/python3.10/site-packages/sqlalchemy/orm/persistence.py", line 1226, in _emit_insert_statements
+    result = connection.execute(
+  File "/workspace/.heroku/python/lib/python3.10/site-packages/sqlalchemy/engine/base.py", line 1412, in execute
+    return meth(
+  File "/workspace/.heroku/python/lib/python3.10/site-packages/sqlalchemy/sql/elements.py", line 483, in _execute_on_connection
+    return connection._execute_clauseelement(
+  File "/workspace/.heroku/python/lib/python3.10/site-packages/sqlalchemy/engine/base.py", line 1635, in _execute_clauseelement
+    ret = self._execute_context(
+  File "/workspace/.heroku/python/lib/python3.10/site-packages/sqlalchemy/engine/base.py", line 1844, in _execute_context
+    return self._exec_single_context(
+  File "/workspace/.heroku/python/lib/python3.10/site-packages/sqlalchemy/engine/base.py", line 1984, in _exec_single_context
+    self._handle_dbapi_exception(
+  File "/workspace/.heroku/python/lib/python3.10/site-packages/sqlalchemy/engine/base.py", line 2339, in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "/workspace/.heroku/python/lib/python3.10/site-packages/sqlalchemy/engine/base.py", line 1965, in _exec_single_context
+    self.dialect.do_execute(
+  File "/workspace/.heroku/python/lib/python3.10/site-packages/sqlalchemy/engine/default.py", line 921, in do_execute
+    cursor.execute(statement, parameters)
+sqlalchemy.exc.IntegrityError: (psycopg2.errors.NotNullViolation) null value in column "group_id" of relation "quizzes" violates not-null constraint
+DETAIL:  Failing row contains (13, first, [{"q": "erere", "o": ["erere", "rerere", "rerer", "ere"], "a": 0..., null).
+
+[SQL: INSERT INTO quizzes (title, questions) VALUES (%(title)s, %(questions)s) RETURNING quizzes.id]
+[parameters: {'title': 'first', 'questions': '[{"q": "erere", "o": ["erere", "rerere", "rerer", "ere"], "a": 0}]'}]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2025-06-28 01:59:42,448 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8187052777:AAGUmozz_nvFrtItvpOWasMNfNzdOfo9gZc/getUpdates "HTTP/1.1 200 OK"
+
