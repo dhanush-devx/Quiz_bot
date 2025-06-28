@@ -157,12 +157,13 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Fix Markdown parsing error by escaping special characters for MarkdownV2
         def escape_md_v2(text):
             escape_chars = r'_*[]()~`>#+-=|{}.!'
+            # Escape '!' character as well
             return ''.join('\\' + c if c in escape_chars else c for c in text)
 
         safe_quiz_id = escape_md_v2(str(quiz_id))
         safe_quiz_link = escape_md_v2(quiz_link)
         await update.message.reply_text(
-            f"🎉 Quiz created successfully!\n\n"
+            f"🎉 Quiz created successfully!\\!\n\n"
             f"*ID:* `{safe_quiz_id}`\n\n"
             f"To start it in a group, use the command:\n"
             f"`/start_quiz {safe_quiz_id}`\n\n"
