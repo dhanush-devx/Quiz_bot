@@ -26,6 +26,7 @@ class Config:
         REDIS_PORT = int(_raw_redis_port)
 
     REDIS_DB = int(os.getenv("REDIS_DB", 0))
+    REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
     
     # Admin IDs (comma-separated)
     ADMIN_IDS = [int(id) for id in os.getenv("ADMIN_IDS", "").split(",") if id]

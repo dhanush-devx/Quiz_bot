@@ -12,12 +12,14 @@ import logging
 logging.info(f"DEBUG_REDIS_CONNECT: Attempting to connect to Redis with "
              f"Host='{Config.REDIS_HOST}', "
              f"Port={Config.REDIS_PORT}, "
-             f"DB={Config.REDIS_DB}")
+             f"DB={Config.REDIS_DB}, "
+             f"Password set: {bool(Config.REDIS_PASSWORD)}")
 
 redis_client = redis.Redis(
     host=Config.REDIS_HOST,
     port=Config.REDIS_PORT,
-    db=Config.REDIS_DB
+    db=Config.REDIS_DB,
+    password=Config.REDIS_PASSWORD
 )
 
 # --- Redis Key Utilities ---
