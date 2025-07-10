@@ -6,8 +6,14 @@ from config import Config
 import redis
 from enum import IntEnum
 from functools import wraps
+import logging
 
 # Redis connection
+logging.info(f"DEBUG_REDIS_CONNECT: Attempting to connect to Redis with "
+             f"Host='{Config.REDIS_HOST}', "
+             f"Port={Config.REDIS_PORT}, "
+             f"DB={Config.REDIS_DB}")
+
 redis_client = redis.Redis(
     host=Config.REDIS_HOST,
     port=Config.REDIS_PORT,
