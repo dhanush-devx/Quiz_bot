@@ -1,43 +1,20 @@
 import logging
+import time
+import asyncio
 from telegram import Update, Poll
 from telegram.ext import ContextTypes
-from database import Session, Quiz, Leaderboard
+from database import get_db_session, Quiz, Leaderboard
+from redis_client import redis_client, redis_key_active_quiz, redis_key_poll_data, redis_key_leaderboard
 from config import Config
-import redis
 from enum import IntEnum
 from functools import wraps
 import json
 
 # --- Configuration & Constants ---
-QUESTION_DURATION_SECONDS = 30  # How long each question stays open
+QUESTION_DURATION_SECONDS = Config.QUESTION_DURATION_SECONDS
 
 # Set up logging
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-)
 logger = logging.getLogger(__name__)
-
-# --- Redis Connection ---
-# It's good practice to handle potential connection errors
-try:
-    redis_client = redis.Redis(
-        host=Config.REDIS_HOST,
-        port=Config.REDIS_PORT,
-        db=Config.REDIS_DB,
-        password=Config.REDIS_PASSWORD,
-        decode_responses=True  # Decode responses to strings
-    )
-    redis_client.ping()
-    logger.info("Successfully connected to Redis.")
-except redis.exceptions.ConnectionError as e:
-    logger.error(f"Could not connect to Redis: {e}")
-    # Depending on the use case, you might want to exit or handle this differently
-    redis_client = None
-
-# --- Redis Key Utilities ---
-def redis_key_active_quiz(chat_id): return f"active_quiz:{chat_id}"
-def redis_key_poll_data(poll_id): return f"poll_data:{poll_id}"
-def redis_key_leaderboard(quiz_id): return f"leaderboard:{quiz_id}"
 
 # --- Quiz State Enum for quiz creation ---
 class QuizState(IntEnum):
@@ -84,17 +61,51 @@ def escape_markdown(text: str) -> str:
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send a welcome message with instructions."""
     await update.message.reply_text(
-        "🌟 *Welcome to the Quiz Bot!* �\n\n"
+        "🌟 *Welcome to the Quiz Bot!* 🎯\n\n"
         "This bot lets you create and run quizzes in your groups.\n\n"
         "*Admin Commands:*\n"
         "`/create_quiz` - Start creating a new quiz (in a private chat with me).\n"
         "`/start_quiz <id>` - Begin a quiz in a group.\n"
         "`/stop_quiz` - Forcefully stop the active quiz in a group.\n"
-        "`/reset_leaderboard <id>` - Clear the scores for a quiz.\n\n"
+        "`/reset_leaderboard <id>` - Clear the scores for a quiz.\n"
+        "`/health` - Check bot system status.\n\n"
         "*User Commands:*\n"
         "`/leaderboard` - Show the scores for the current quiz.",
         parse_mode='MarkdownV2'
     )
+
+@admin_required
+async def health(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Check system health status."""
+    try:
+        from database import health_check as db_health
+        
+        # Check database
+        db_status = "🟢 Connected" if db_health() else "🔴 Disconnected"
+        
+        # Check Redis
+        redis_status = "🟢 Connected" if redis_client.health_check() else "🔴 Disconnected"
+        
+        # Bot info
+        bot_info = await context.bot.get_me()
+        
+        health_message = (
+            f"🏥 *System Health Status*\n\n"
+            f"*Bot:* 🟢 @{escape_markdown(bot_info.username)}\n"
+            f"*Database:* {db_status}\n"
+            f"*Redis Cache:* {redis_status}\n"
+            f"*Active Chats:* {len(context.job_queue.jobs)}\n\n"
+            f"*Configuration:*\n"
+            f"*Question Duration:* {QUESTION_DURATION_SECONDS}s\n"
+            f"*Max Questions:* {Config.MAX_QUESTIONS_PER_QUIZ}\n"
+            f"*Admin Count:* {len(Config.ADMIN_IDS)}"
+        )
+        
+        await update.message.reply_text(health_message, parse_mode='MarkdownV2')
+        
+    except Exception as e:
+        logger.error(f"Health check error: {e}")
+        await update.message.reply_text("❌ Error performing health check.")
 
 @admin_required
 async def create_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -116,13 +127,33 @@ async def handle_creation_message(update: Update, context: ContextTypes.DEFAULT_
     quiz_data = context.user_data.get('quiz_creation', {})
 
     if state == QuizState.AWAITING_TITLE:
-        quiz_data['title'] = update.message.text
-        context.user_data['state'] = QuizState.AWAITING_QUESTION
-        await update.message.reply_text(
-            "✅ Title set! Now, please send me your questions.\n\n"
-            "Create a poll, select **'Quiz mode'**, and choose the correct answer. Send them one by one.\n\n"
-            "When you've added all your questions, send `/done`."
-        )
+        try:
+            title = update.message.text.strip()
+            
+            # Input validation
+            if len(title) > Config.MAX_QUIZ_TITLE_LENGTH:
+                await update.message.reply_text(
+                    f"⚠️ Title is too long. Please keep it under {Config.MAX_QUIZ_TITLE_LENGTH} characters."
+                )
+                return
+                
+            if not title:
+                await update.message.reply_text("⚠️ Title cannot be empty. Please provide a title.")
+                return
+                
+            # Basic sanitization
+            title = title.replace('\n', ' ').replace('\r', ' ')
+            
+            quiz_data['title'] = title
+            context.user_data['state'] = QuizState.AWAITING_QUESTION
+            await update.message.reply_text(
+                "✅ Title set! Now, please send me your questions.\n\n"
+                "Create a poll, select **'Quiz mode'**, and choose the correct answer. Send them one by one.\n\n"
+                "When you've added all your questions, send `/done`."
+            )
+        except Exception as e:
+            logger.error(f"Error handling creation message: {e}")
+            await update.message.reply_text("❌ An error occurred. Please try again.")
 
 async def handle_creation_poll(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle polls sent during the quiz creation process."""
@@ -136,16 +167,40 @@ async def handle_creation_poll(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return
 
+    # Input validation
+    if len(poll.options) < 2:
+        await update.message.reply_text("⚠️ Poll must have at least 2 options!")
+        return
+        
+    if len(poll.options) > 10:
+        await update.message.reply_text("⚠️ Poll can have maximum 10 options!")
+        return
+
     quiz_data = context.user_data.get('quiz_creation', {'questions': []})
-    quiz_data['questions'].append({
-        "q": poll.question,
-        "o": [option.text for option in poll.options],
+    
+    # Check question limit
+    if len(quiz_data['questions']) >= Config.MAX_QUESTIONS_PER_QUIZ:
+        await update.message.reply_text(f"⚠️ Maximum {Config.MAX_QUESTIONS_PER_QUIZ} questions allowed!")
+        return
+    
+    # Validate question text length
+    if len(poll.question) > 300:
+        await update.message.reply_text("⚠️ Question text is too long. Please keep it under 300 characters.")
+        return
+    
+    # Sanitize and add question
+    question_data = {
+        "q": poll.question.strip(),
+        "o": [option.text.strip() for option in poll.options],
         "a": poll.correct_option_id
-    })
+    }
+    
+    quiz_data['questions'].append(question_data)
     
     question_count = len(quiz_data['questions'])
     await update.message.reply_text(
-        f"✅ Question {question_count} added! Send another poll or type `/done` to finish."
+        f"✅ Question {question_count} added! Send another poll or type `/done` to finish.\n"
+        f"({Config.MAX_QUESTIONS_PER_QUIZ - question_count} questions remaining)"
     )
 
 @admin_required
@@ -159,28 +214,39 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not quiz_data.get('questions'):
         await update.message.reply_text("❌ Your quiz has no questions! Please add at least one poll before finishing.")
         return
-
-    session = Session()
-    try:
-        new_quiz = Quiz(title=quiz_data['title'], questions=quiz_data['questions'])
-        session.add(new_quiz)
-        session.commit()
-        quiz_id = new_quiz.id
         
-        message = (
-            f"🎉 *Quiz Created Successfully\\!* 🎉\n\n"
-            f"*Title:* {escape_markdown(new_quiz.title)}\n"
-            f"*ID:* `{quiz_id}`\n\n"
-            f"To start this quiz in a group, go to the group and use the command:\n"
-            f"`/start_quiz {quiz_id}`"
-        )
-        await update.message.reply_text(message, parse_mode='MarkdownV2')
+    # Validate question count
+    if len(quiz_data['questions']) > Config.MAX_QUESTIONS_PER_QUIZ:
+        await update.message.reply_text(f"❌ Too many questions! Maximum allowed: {Config.MAX_QUESTIONS_PER_QUIZ}")
+        return
+
+    try:
+        with get_db_session() as session:
+            new_quiz = Quiz(title=quiz_data['title'], questions=quiz_data['questions'])
+            
+            # Validate quiz before saving
+            if not new_quiz.validate_questions():
+                await update.message.reply_text("❌ Invalid question format detected. Please try again.")
+                return
+                
+            session.add(new_quiz)
+            session.flush()  # Get the ID without committing
+            quiz_id = new_quiz.id
+            
+            message = (
+                f"🎉 *Quiz Created Successfully\\!* 🎉\n\n"
+                f"*Title:* {escape_markdown(new_quiz.title)}\n"
+                f"*ID:* `{quiz_id}`\n"
+                f"*Questions:* {new_quiz.question_count}\n\n"
+                f"To start this quiz in a group, go to the group and use the command:\n"
+                f"`/start_quiz {quiz_id}`"
+            )
+            await update.message.reply_text(message, parse_mode='MarkdownV2')
+            
     except Exception as e:
         logger.error(f"Error saving quiz to database: {e}")
         await update.message.reply_text("❌ An error occurred while saving your quiz. Please try again.")
-        session.rollback()
     finally:
-        session.close()
         # Clean up user_data
         context.user_data.pop('quiz_creation', None)
         context.user_data.pop('state', None)
@@ -193,37 +259,60 @@ async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     chat_id = update.effective_chat.id
-    if redis_client and redis_client.get(redis_key_active_quiz(chat_id)):
+    
+    # Check if a quiz is already running
+    if redis_client.exists(redis_key_active_quiz(chat_id)):
         await update.message.reply_text("⚠️ A quiz is already running in this chat. Use `/stop_quiz` to end it first.")
         return
         
-    quiz_id = context.args[0]
-    session = Session()
+    quiz_id_str = context.args[0]
+    
+    # Validate quiz_id is numeric
     try:
-        quiz = session.query(Quiz).filter_by(id=quiz_id).first()
-        if not quiz:
-            await update.message.reply_text("❌ Quiz not found. Please check the ID.")
-            return
+        quiz_id = int(quiz_id_str)
+        if quiz_id <= 0:
+            raise ValueError("Quiz ID must be positive")
+    except ValueError:
+        await update.message.reply_text("❌ Invalid Quiz ID. Please provide a valid numeric ID.")
+        return
+        
+    try:
+        with get_db_session() as session:
+            quiz = session.query(Quiz).filter_by(id=quiz_id).first()
+            if not quiz:
+                await update.message.reply_text("❌ Quiz not found. Please check the ID.")
+                return
 
-        if not quiz.questions:
-            await update.message.reply_text("❌ This quiz has no questions and cannot be started.")
-            return
-        
-        # Set the active quiz in Redis
-        if redis_client:
-            redis_client.set(redis_key_active_quiz(chat_id), quiz.id)
-        
-        await update.message.reply_text(f"🚀 The quiz '{quiz.title}' is about to begin! First question in 3 seconds...")
-        
-        # Schedule the first question
-        context.job_queue.run_once(
-            _send_question,
-            when=3,
-            data={'chat_id': chat_id, 'quiz_id': quiz.id, 'q_index': 0},
-            name=f"quiz_{chat_id}"
-        )
-    finally:
-        session.close()
+            if not quiz.questions or not quiz.validate_questions():
+                await update.message.reply_text("❌ This quiz has invalid or no questions and cannot be started.")
+                return
+            
+            # Set the active quiz in Redis
+            redis_client.set(redis_key_active_quiz(chat_id), str(quiz.id))
+            
+            await update.message.reply_text(
+                f"🚀 The quiz '{escape_markdown(quiz.title)}' is about to begin!\n"
+                f"📊 {quiz.question_count} questions\n"
+                f"⏱️ {QUESTION_DURATION_SECONDS} seconds per question\n\n"
+                f"First question in 3 seconds..."
+            )
+            
+            # Schedule the first question
+            try:
+                context.job_queue.run_once(
+                    _send_question,
+                    when=3,
+                    data={'chat_id': chat_id, 'quiz_id': quiz.id, 'q_index': 0},
+                    name=f"quiz_{chat_id}"
+                )
+            except Exception as job_e:
+                logger.error(f"Failed to schedule quiz: {job_e}")
+                await update.message.reply_text("❌ Failed to start quiz. Please try again.")
+                redis_client.delete(redis_key_active_quiz(chat_id))
+                    
+    except Exception as e:
+        logger.error(f"Error starting quiz: {e}")
+        await update.message.reply_text("❌ An error occurred while starting the quiz. Please try again.")
 
 async def _send_question(context: ContextTypes.DEFAULT_TYPE):
     """Sends a question poll and schedules the next action."""
@@ -232,41 +321,68 @@ async def _send_question(context: ContextTypes.DEFAULT_TYPE):
     quiz_id = job_data['quiz_id']
     q_index = job_data['q_index']
 
-    session = Session()
     try:
-        quiz = session.query(Quiz).filter_by(id=quiz_id).first()
-        if not quiz or q_index >= len(quiz.questions):
-            # This case handles if the quiz is deleted mid-run
-            await _end_quiz(context, chat_id, quiz_id)
-            return
+        with get_db_session() as session:
+            quiz = session.query(Quiz).filter_by(id=quiz_id).first()
+            if not quiz or q_index >= len(quiz.questions):
+                # This case handles if the quiz is deleted mid-run
+                await _end_quiz(context, chat_id, quiz_id)
+                return
 
-        question_data = quiz.questions[q_index]
-        message = await context.bot.send_poll(
-            chat_id=chat_id,
-            question=f"Question {q_index + 1}/{len(quiz.questions)}\n\n{question_data['q']}",
-            options=question_data['o'],
-            type=Poll.QUIZ,
-            correct_option_id=question_data['a'],
-            is_anonymous=False,
-            open_period=QUESTION_DURATION_SECONDS
-        )
-        
-        # Store poll data in Redis to link answers back to the quiz
-        if redis_client:
-            poll_info = {'quiz_id': quiz_id, 'chat_id': chat_id, 'correct_option': question_data['a']}
-            redis_client.set(redis_key_poll_data(message.poll.id), json.dumps(poll_info), ex=QUESTION_DURATION_SECONDS + 10)
+            question_data = quiz.questions[q_index]
+            try:
+                # Implement retry logic for poll sending
+                max_retries = 3
+                retry_delay = 1
+                
+                for attempt in range(max_retries):
+                    try:
+                        message = await context.bot.send_poll(
+                            chat_id=chat_id,
+                            question=f"Question {q_index + 1}/{len(quiz.questions)}\n\n{question_data['q']}",
+                            options=question_data['o'],
+                            type=Poll.QUIZ,
+                            correct_option_id=question_data['a'],
+                            is_anonymous=False,
+                            open_period=QUESTION_DURATION_SECONDS
+                        )
+                        break  # Success, exit retry loop
+                        
+                    except Exception as retry_e:
+                        if attempt < max_retries - 1:
+                            logger.warning(f"Poll send attempt {attempt + 1} failed, retrying in {retry_delay}s: {retry_e}")
+                            await asyncio.sleep(retry_delay)
+                            retry_delay *= 2  # Exponential backoff
+                        else:
+                            raise retry_e  # Final attempt failed
+                
+                # Store poll data in Redis to link answers back to the quiz
+                poll_info = {'quiz_id': quiz_id, 'chat_id': chat_id, 'correct_option': question_data['a']}
+                redis_client.set_json(
+                    redis_key_poll_data(message.poll.id), 
+                    poll_info, 
+                    ex=QUESTION_DURATION_SECONDS + 10
+                )
 
-        # Schedule the job to end this question and send the next one
-        context.job_queue.run_once(
-            _end_question,
-            when=QUESTION_DURATION_SECONDS,
-            data={'chat_id': chat_id, 'quiz_id': quiz_id, 'q_index': q_index + 1, 'poll_id': message.poll.id, 'message_id': message.message_id},
-            name=f"quiz_{chat_id}"
-        )
+                # Schedule the job to end this question and send the next one
+                context.job_queue.run_once(
+                    _end_question,
+                    when=QUESTION_DURATION_SECONDS,
+                    data={'chat_id': chat_id, 'quiz_id': quiz_id, 'q_index': q_index + 1, 'poll_id': message.poll.id, 'message_id': message.message_id},
+                    name=f"quiz_{chat_id}"
+                )
+            except Exception as send_e:
+                logger.error(f"Failed to send poll: {send_e}")
+                await context.bot.send_message(chat_id, "❌ Failed to send question. Quiz stopped.")
+                await _end_quiz(context, chat_id, quiz_id)
+                
     except Exception as e:
-        logger.error(f"Error sending question: {e}")
-    finally:
-        session.close()
+        logger.error(f"Error in _send_question: {e}")
+        try:
+            await context.bot.send_message(chat_id, "❌ An error occurred. Quiz stopped.")
+            await _end_quiz(context, chat_id, quiz_id)
+        except Exception as cleanup_e:
+            logger.error(f"Failed to send error message: {cleanup_e}")
 
 async def _end_question(context: ContextTypes.DEFAULT_TYPE):
     """Stops the poll, announces the answer, and triggers the next question or ends the quiz."""
@@ -283,27 +399,28 @@ async def _end_question(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.warning(f"Could not stop poll (it might have been closed already): {e}")
 
-    session = Session()
     try:
-        quiz = session.query(Quiz).filter_by(id=quiz_id).first()
-        if not quiz:
-            return
+        with get_db_session() as session:
+            quiz = session.query(Quiz).filter_by(id=quiz_id).first()
+            if not quiz:
+                return
 
-        # Check if there are more questions
-        if next_q_index < len(quiz.questions):
-            # Schedule the next question
-            context.job_queue.run_once(
-                _send_question,
-                when=3, # 3-second delay between questions
-                data={'chat_id': chat_id, 'quiz_id': quiz_id, 'q_index': next_q_index},
-                name=f"quiz_{chat_id}"
-            )
-        else:
-            # End of the quiz
-            await context.bot.send_message(chat_id, "🏁 The quiz has finished! 🏁")
-            await _end_quiz(context, chat_id, quiz_id)
-    finally:
-        session.close()
+            # Check if there are more questions
+            if next_q_index < len(quiz.questions):
+                # Schedule the next question
+                context.job_queue.run_once(
+                    _send_question,
+                    when=3, # 3-second delay between questions
+                    data={'chat_id': chat_id, 'quiz_id': quiz_id, 'q_index': next_q_index},
+                    name=f"quiz_{chat_id}"
+                )
+            else:
+                # End of the quiz
+                await context.bot.send_message(chat_id, "🏁 The quiz has finished! 🏁")
+                await _end_quiz(context, chat_id, quiz_id)
+    except Exception as e:
+        logger.error(f"Error in _end_question: {e}")
+        await _end_quiz(context, chat_id, quiz_id)
 
 async def _end_quiz(context, chat_id, quiz_id):
     """Cleans up Redis and shows the final leaderboard."""
@@ -323,46 +440,49 @@ async def _end_quiz(context, chat_id, quiz_id):
 
 
 async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Process a user's answer to a quiz poll and update their score."""
-    if not redis_client: return
+    """Process a user's answer to a quiz poll and update their score with atomic operations."""
+    if not redis_client.is_available: 
+        return
 
     answer = update.poll_answer
-    poll_data_str = redis_client.get(redis_key_poll_data(answer.poll_id))
+    poll_data = redis_client.get_json(redis_key_poll_data(answer.poll_id))
     
-    if not poll_data_str:
+    if not poll_data:
         return # This poll is not part of an active quiz
 
-    poll_data = json.loads(poll_data_str)
     quiz_id = poll_data['quiz_id']
     correct_option = poll_data['correct_option']
 
     if answer.option_ids and answer.option_ids[0] == correct_option:
         user_id = str(answer.user.id)
-        session = Session()
+        correlation_id = f"score_update_{quiz_id}_{user_id}_{int(time.time())}"
+        
         try:
-            lb = session.query(Leaderboard).filter_by(quiz_id=quiz_id).first()
-            if not lb:
-                lb = Leaderboard(quiz_id=quiz_id, user_scores={})
-                session.add(lb)
-            
-            # Use SQLAlchemy's automatic JSON mutation tracking
-            new_scores = dict(lb.user_scores)
-            new_scores[user_id] = new_scores.get(user_id, 0) + 1
-            lb.user_scores = new_scores
-            
-            session.commit()
-            # Invalidate leaderboard cache
-            redis_client.delete(redis_key_leaderboard(quiz_id))
+            with get_db_session() as session:
+                # Use row-level locking to prevent race conditions
+                lb = session.query(Leaderboard).filter_by(quiz_id=quiz_id).with_for_update().first()
+                if not lb:
+                    lb = Leaderboard(quiz_id=quiz_id, user_scores={})
+                    session.add(lb)
+                
+                # Add score using the model method
+                lb.add_score(int(user_id))
+                
+                # Invalidate leaderboard cache
+                redis_client.delete(redis_key_leaderboard(quiz_id))
+                
+                logger.info(f"Score updated successfully for user {user_id} in quiz {quiz_id} [{correlation_id}]")
+                
         except Exception as e:
-            logger.error(f"Error updating leaderboard: {e}")
-            session.rollback()
-        finally:
-            session.close()
+            logger.error(f"Error updating leaderboard [{correlation_id}]: {e}")
 
 async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE, quiz_id_override=None):
     """Display the leaderboard for the active or specified quiz."""
     chat_id = update.effective_chat.id
-    quiz_id = quiz_id_override or (redis_client.get(redis_key_active_quiz(chat_id)) if redis_client else None)
+    quiz_id = quiz_id_override
+    
+    if not quiz_id and redis_client.is_available:
+        quiz_id = redis_client.get(redis_key_active_quiz(chat_id))
     
     if not quiz_id:
         await context.bot.send_message(chat_id, "ℹ️ There is no active quiz in this chat.")
@@ -370,39 +490,49 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE, quiz_i
     
     # Check cache first
     cache_key = redis_key_leaderboard(quiz_id)
-    if redis_client and redis_client.exists(cache_key):
+    if redis_client.is_available:
         cached_leaderboard = redis_client.get(cache_key)
-        await context.bot.send_message(chat_id, cached_leaderboard, parse_mode='MarkdownV2')
-        return
-    
-    session = Session()
-    try:
-        lb = session.query(Leaderboard).filter_by(quiz_id=quiz_id).first()
-        quiz = session.query(Quiz).filter_by(id=quiz_id).first()
-
-        if not lb or not lb.user_scores:
-            await context.bot.send_message(chat_id, "📊 The leaderboard is empty!")
+        if cached_leaderboard:
+            await context.bot.send_message(chat_id, cached_leaderboard, parse_mode='MarkdownV2')
             return
-        
-        sorted_scores = sorted(lb.user_scores.items(), key=lambda item: item[1], reverse=True)
-        
-        leaderboard_lines = [f"🏆 *Leaderboard for: {escape_markdown(quiz.title)}* 🏆\n"]
-        for idx, (user_id, score) in enumerate(sorted_scores[:10]): # Top 10
-            try:
-                member = await context.bot.get_chat_member(chat_id, int(user_id))
-                name = escape_markdown(member.user.full_name)
-            except Exception:
-                name = f"User {user_id}"
-            leaderboard_lines.append(f"*{idx + 1}\\.* {name}: *{score}*")
+    
+    try:
+        with get_db_session() as session:
+            lb = session.query(Leaderboard).filter_by(quiz_id=quiz_id).first()
+            quiz = session.query(Quiz).filter_by(id=quiz_id).first()
+
+            if not quiz:
+                await context.bot.send_message(chat_id, "❌ Quiz not found.")
+                return
+
+            if not lb or not lb.user_scores:
+                await context.bot.send_message(chat_id, "📊 The leaderboard is empty!")
+                return
             
-        leaderboard_text = "\n".join(leaderboard_lines)
-        
-        if redis_client:
-            redis_client.setex(cache_key, 300, leaderboard_text) # Cache for 5 minutes
+            # Use the model's helper method
+            top_scores = lb.get_top_scores(Config.MAX_LEADERBOARD_ENTRIES)
             
-        await context.bot.send_message(chat_id, leaderboard_text, parse_mode='MarkdownV2')
-    finally:
-        session.close()
+            leaderboard_lines = [f"🏆 *Leaderboard for: {escape_markdown(quiz.title)}* 🏆\n"]
+            for idx, (user_id, score) in enumerate(top_scores):
+                try:
+                    member = await context.bot.get_chat_member(chat_id, int(user_id))
+                    name = escape_markdown(member.user.full_name)
+                except Exception as user_e:
+                    logger.warning(f"Failed to get user info for {user_id}: {user_e}")
+                    name = f"User {user_id}"
+                leaderboard_lines.append(f"*{idx + 1}\\.* {name}: *{score}*")
+                
+            leaderboard_text = "\n".join(leaderboard_lines)
+            
+            # Cache the result
+            if redis_client.is_available:
+                redis_client.setex(cache_key, Config.LEADERBOARD_CACHE_TTL, leaderboard_text)
+                
+            await context.bot.send_message(chat_id, leaderboard_text, parse_mode='MarkdownV2')
+            
+    except Exception as e:
+        logger.error(f"Error getting leaderboard: {e}")
+        await context.bot.send_message(chat_id, "❌ An error occurred while getting the leaderboard.")
 
 @admin_required
 async def stop_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -428,21 +558,49 @@ async def reset_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("ℹ️ Please provide a Quiz ID. Usage: `/reset_leaderboard <quiz_id>`")
         return
     
-    quiz_id = context.args[0]
-    session = Session()
+    quiz_id_str = context.args[0]
+    
+    # Validate quiz_id is numeric
     try:
-        lb = session.query(Leaderboard).filter_by(quiz_id=quiz_id).first()
-        if lb:
-            lb.user_scores = {}
-            session.commit()
-            if redis_client:
+        quiz_id = int(quiz_id_str)
+        if quiz_id <= 0:
+            raise ValueError("Quiz ID must be positive")
+    except ValueError:
+        await update.message.reply_text("❌ Invalid Quiz ID. Please provide a valid numeric ID.")
+        return
+    
+    try:
+        with get_db_session() as session:
+            lb = session.query(Leaderboard).filter_by(quiz_id=quiz_id).first()
+            if lb:
+                lb.user_scores = {}
+                # Invalidate cache
                 redis_client.delete(redis_key_leaderboard(quiz_id))
-            await update.message.reply_text(f"✅ Leaderboard for quiz `{quiz_id}` has been reset.")
-        else:
-            await update.message.reply_text(f"ℹ️ No leaderboard found for quiz `{quiz_id}`.")
+                await update.message.reply_text(f"✅ Leaderboard for quiz `{quiz_id}` has been reset.")
+            else:
+                await update.message.reply_text(f"ℹ️ No leaderboard found for quiz `{quiz_id}`.")
     except Exception as e:
         logger.error(f"Error resetting leaderboard: {e}")
-        session.rollback()
         await update.message.reply_text("❌ An error occurred while resetting the leaderboard.")
-    finally:
-        session.close()
+
+# --- Missing Handler Functions ---
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle regular text messages and route them appropriately."""
+    # Route messages during quiz creation process
+    if 'state' in context.user_data and context.user_data['state'] == QuizState.AWAITING_TITLE:
+        await handle_creation_message(update, context)
+    else:
+        # For other messages, you can add general message handling here
+        # Currently, just ignore non-creation messages
+        pass
+
+async def handle_poll_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle poll messages and route them appropriately."""
+    # Route polls during quiz creation process
+    if 'state' in context.user_data and context.user_data['state'] == QuizState.AWAITING_QUESTION:
+        await handle_creation_poll(update, context)
+    else:
+        # For other polls, you can add general poll handling here
+        # Currently, just ignore non-creation polls
+        pass
