@@ -1,6 +1,10 @@
 import os
 import logging
 from typing import List, Optional
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -69,8 +73,8 @@ class Config:
     
     # App configuration with environment-aware defaults
     ENVIRONMENT = os.getenv("ENVIRONMENT", "development").lower()
-    QUESTION_DURATION_SECONDS: int = int(os.getenv("QUESTION_DURATION_SECONDS", "30"))
-    MAX_QUESTIONS_PER_QUIZ: int = int(os.getenv("MAX_QUESTIONS_PER_QUIZ", "50"))
+    QUESTION_DURATION_SECONDS: int = int(os.getenv("QUESTION_DURATION_SECONDS", "15"))
+    MAX_QUESTIONS_PER_QUIZ: int = int(os.getenv("MAX_QUESTIONS_PER_QUIZ", "18"))
     MAX_QUIZ_TITLE_LENGTH: int = int(os.getenv("MAX_QUIZ_TITLE_LENGTH", "255"))
     LEADERBOARD_CACHE_TTL: int = int(os.getenv("LEADERBOARD_CACHE_TTL", "300"))  # 5 minutes
     MAX_LEADERBOARD_ENTRIES: int = int(os.getenv("MAX_LEADERBOARD_ENTRIES", "10"))

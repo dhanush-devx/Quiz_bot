@@ -56,23 +56,97 @@ def escape_markdown(text: str) -> str:
     escape_chars = r'_*[]()~`>#+-=|{}.!'
     return ''.join(f'\\{char}' if char in escape_chars else char for char in str(text))
 
+async def _find_quiz_by_title_or_id(query: str) -> tuple:
+    """
+    Find quiz by title or ID. Returns (quiz_data_dict, error_message).
+    Supports both numeric IDs and string titles with flexible matching.
+    Returns a dictionary with quiz data instead of SQLAlchemy object to avoid session issues.
+    """
+    try:
+        with get_db_session() as session:
+            # First, try to parse as numeric ID
+            try:
+                quiz_id = int(query)
+                if quiz_id > 0:
+                    quiz = session.query(Quiz).filter_by(id=quiz_id).first()
+                    if quiz:
+                        # Extract data while in session
+                        quiz_data = {
+                            'id': quiz.id,
+                            'title': quiz.title,
+                            'questions': quiz.questions
+                        }
+                        return quiz_data, None
+                    else:
+                        return None, f"❌ Quiz with ID `{quiz_id}` not found."
+            except ValueError:
+                # Not a number, search by title
+                pass
+            
+            # Search by exact title match (case-insensitive)
+            quiz = session.query(Quiz).filter(Quiz.title.ilike(query)).first()
+            if quiz:
+                quiz_data = {
+                    'id': quiz.id,
+                    'title': quiz.title,
+                    'questions': quiz.questions
+                }
+                return quiz_data, None
+            
+            # Search by partial title match
+            quizzes = session.query(Quiz).filter(Quiz.title.ilike(f"%{query}%")).all()
+            
+            if not quizzes:
+                return None, f"❌ No quiz found with title containing '{query}'."
+            elif len(quizzes) == 1:
+                quiz = quizzes[0]
+                quiz_data = {
+                    'id': quiz.id,
+                    'title': quiz.title,
+                    'questions': quiz.questions
+                }
+                return quiz_data, None
+            else:
+                # Multiple matches found
+                quiz_list = "\n".join([f"• ID: {q.id} - \"{q.title}\"" for q in quizzes[:5]])
+                if len(quizzes) > 5:
+                    quiz_list += f"\n... and {len(quizzes) - 5} more"
+                
+                return None, f"🔍 Multiple quizzes found for '{query}':\n\n{quiz_list}\n\nPlease use a more specific title or quiz ID."
+                
+    except Exception as e:
+        logger.error(f"Error finding quiz: {e}")
+        return None, "❌ Database error occurred while searching for quiz."
+
 # --- Command Handlers ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Send a welcome message with instructions."""
-    await update.message.reply_text(
-        "🌟 *Welcome to the Quiz Bot!* 🎯\n\n"
-        "This bot lets you create and run quizzes in your groups.\n\n"
-        "*Admin Commands:*\n"
-        "`/create_quiz` - Start creating a new quiz (in a private chat with me).\n"
-        "`/start_quiz <id>` - Begin a quiz in a group.\n"
-        "`/stop_quiz` - Forcefully stop the active quiz in a group.\n"
-        "`/reset_leaderboard <id>` - Clear the scores for a quiz.\n"
-        "`/health` - Check bot system status.\n\n"
-        "*User Commands:*\n"
-        "`/leaderboard` - Show the scores for the current quiz.",
-        parse_mode='MarkdownV2'
-    )
+    """Send a welcome message with role-based instructions."""
+    # Check if user is an admin
+    is_admin = await _is_admin(update)
+    
+    if is_admin:
+        # Admin welcome message with full command list
+        welcome_text = (
+            "Welcome to the StellarQuiz Bot! 🎯\n\n"
+            "Admin Commands:\n"
+            "/create_quiz - Start creating a new quiz (in a private chat with me).\n"
+            "/start_quiz <id_or_title> - Begin a quiz in a group.\n"
+            "/stop_quiz - Forcefully stop the active quiz in a group.\n"
+            "/reset_leaderboard <id_or_title> - Clear the scores for a quiz.\n"
+            "/health - Check bot system status.\n\n"
+            "User Commands:\n"
+            "/leaderboard [title of quiz] - Show the scores for the current or specified quiz."
+        )
+    else:
+        # Regular user welcome message with limited commands
+        welcome_text = (
+            "Welcome to the StellarQuiz Bot! 🎯\n\n"
+            "User Commands:\n"
+            "/leaderboard [name of the quiz] - Show the scores of that quiz."
+        )
+    
+    await update.message.reply_text(welcome_text)
 
 @admin_required
 async def health(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -101,7 +175,7 @@ async def health(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"*Admin Count:* {len(Config.ADMIN_IDS)}"
         )
         
-        await update.message.reply_text(health_message, parse_mode='MarkdownV2')
+        await update.message.reply_text(health_message)
         
     except Exception as e:
         logger.error(f"Health check error: {e}")
@@ -241,7 +315,7 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"To start this quiz in a group, go to the group and use the command:\n"
                 f"`/start_quiz {quiz_id}`"
             )
-            await update.message.reply_text(message, parse_mode='MarkdownV2')
+            await update.message.reply_text(message)
             
     except Exception as e:
         logger.error(f"Error saving quiz to database: {e}")
@@ -253,9 +327,9 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @admin_required
 async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Start a quiz in a group."""
+    """Start a quiz in a group by ID or title."""
     if not context.args:
-        await update.message.reply_text("ℹ️ Please provide a Quiz ID. Usage: `/start_quiz <quiz_id>`")
+        await update.message.reply_text("ℹ️ Please provide a Quiz ID or title. Usage: `/start_quiz <quiz_id_or_title>`")
         return
     
     chat_id = update.effective_chat.id
@@ -265,50 +339,53 @@ async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ A quiz is already running in this chat. Use `/stop_quiz` to end it first.")
         return
         
-    quiz_id_str = context.args[0]
+    # Join all arguments in case title has spaces
+    query = " ".join(context.args)
     
-    # Validate quiz_id is numeric
-    try:
-        quiz_id = int(quiz_id_str)
-        if quiz_id <= 0:
-            raise ValueError("Quiz ID must be positive")
-    except ValueError:
-        await update.message.reply_text("❌ Invalid Quiz ID. Please provide a valid numeric ID.")
+    # Find quiz by ID or title
+    quiz_data, error_message = await _find_quiz_by_title_or_id(query)
+    if not quiz_data:
+        await update.message.reply_text(error_message)
         return
-        
+    
+    quiz_id = quiz_data['id']
+    quiz_title = quiz_data['title']
+    quiz_questions = quiz_data['questions']
+    
     try:
-        with get_db_session() as session:
-            quiz = session.query(Quiz).filter_by(id=quiz_id).first()
-            if not quiz:
-                await update.message.reply_text("❌ Quiz not found. Please check the ID.")
+        # Validate quiz has questions
+        if not quiz_questions or len(quiz_questions) == 0:
+            await update.message.reply_text("❌ This quiz has no questions and cannot be started.")
+            return
+        
+        # Basic validation of question format
+        for question in quiz_questions:
+            if not isinstance(question, dict) or 'q' not in question or 'o' not in question or 'a' not in question:
+                await update.message.reply_text("❌ This quiz has invalid question format and cannot be started.")
                 return
-
-            if not quiz.questions or not quiz.validate_questions():
-                await update.message.reply_text("❌ This quiz has invalid or no questions and cannot be started.")
-                return
-            
-            # Set the active quiz in Redis
-            redis_client.set(redis_key_active_quiz(chat_id), str(quiz.id))
-            
-            await update.message.reply_text(
-                f"🚀 The quiz '{escape_markdown(quiz.title)}' is about to begin!\n"
-                f"📊 {quiz.question_count} questions\n"
-                f"⏱️ {QUESTION_DURATION_SECONDS} seconds per question\n\n"
-                f"First question in 3 seconds..."
+        
+        # Set the active quiz in Redis
+        redis_client.set(redis_key_active_quiz(chat_id), str(quiz_id))
+        
+        await update.message.reply_text(
+            f"🚀 The quiz '{escape_markdown(quiz_title)}' is about to begin!\n"
+            f"📊 {len(quiz_questions)} questions\n"
+            f"⏱️ {QUESTION_DURATION_SECONDS} seconds per question\n\n"
+            f"First question in 3 seconds..."
+        )
+        
+        # Schedule the first question
+        try:
+            context.job_queue.run_once(
+                _send_question,
+                when=3,
+                data={'chat_id': chat_id, 'quiz_id': quiz_id, 'q_index': 0},
+                name=f"quiz_{chat_id}"
             )
-            
-            # Schedule the first question
-            try:
-                context.job_queue.run_once(
-                    _send_question,
-                    when=3,
-                    data={'chat_id': chat_id, 'quiz_id': quiz.id, 'q_index': 0},
-                    name=f"quiz_{chat_id}"
-                )
-            except Exception as job_e:
-                logger.error(f"Failed to schedule quiz: {job_e}")
-                await update.message.reply_text("❌ Failed to start quiz. Please try again.")
-                redis_client.delete(redis_key_active_quiz(chat_id))
+        except Exception as job_e:
+            logger.error(f"Failed to schedule quiz: {job_e}")
+            await update.message.reply_text("❌ Failed to start quiz. Please try again.")
+            redis_client.delete(redis_key_active_quiz(chat_id))
                     
     except Exception as e:
         logger.error(f"Error starting quiz: {e}")
@@ -480,12 +557,29 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE, quiz_i
     """Display the leaderboard for the active or specified quiz."""
     chat_id = update.effective_chat.id
     quiz_id = quiz_id_override
+    quiz_title = None
     
+    # If quiz_id is provided via arguments (e.g., /leaderboard <title>)
+    if not quiz_id and context.args:
+        query = " ".join(context.args)
+        quiz_data, error_message = await _find_quiz_by_title_or_id(query)
+        if not quiz_data:
+            await context.bot.send_message(chat_id, error_message)
+            return
+        # Extract data from dictionary
+        quiz_id = quiz_data['id']
+        quiz_title = quiz_data['title']
+    
+    # If no quiz specified, check for active quiz
     if not quiz_id and redis_client.is_available:
         quiz_id = redis_client.get(redis_key_active_quiz(chat_id))
     
     if not quiz_id:
-        await context.bot.send_message(chat_id, "ℹ️ There is no active quiz in this chat.")
+        await context.bot.send_message(
+            chat_id, 
+            "ℹ️ Please specify a quiz or start one first.\n"
+            "Usage: `/leaderboard <quiz_id_or_title>` or start a quiz with `/start_quiz`"
+        )
         return
     
     # Check cache first
@@ -493,26 +587,30 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE, quiz_i
     if redis_client.is_available:
         cached_leaderboard = redis_client.get(cache_key)
         if cached_leaderboard:
-            await context.bot.send_message(chat_id, cached_leaderboard, parse_mode='MarkdownV2')
+            await context.bot.send_message(chat_id, cached_leaderboard)
             return
     
     try:
         with get_db_session() as session:
             lb = session.query(Leaderboard).filter_by(quiz_id=quiz_id).first()
-            quiz = session.query(Quiz).filter_by(id=quiz_id).first()
+            # Get quiz info if we don't have it already
+            if not quiz_title:
+                quiz = session.query(Quiz).filter_by(id=quiz_id).first()
+                if quiz:
+                    quiz_title = quiz.title
 
-            if not quiz:
+            if not quiz_title:
                 await context.bot.send_message(chat_id, "❌ Quiz not found.")
                 return
 
             if not lb or not lb.user_scores:
-                await context.bot.send_message(chat_id, "📊 The leaderboard is empty!")
+                await context.bot.send_message(chat_id, f"🏆 Leaderboard for \"{escape_markdown(quiz_title)}\" is empty!")
                 return
             
             # Use the model's helper method
             top_scores = lb.get_top_scores(Config.MAX_LEADERBOARD_ENTRIES)
             
-            leaderboard_lines = [f"🏆 *Leaderboard for: {escape_markdown(quiz.title)}* 🏆\n"]
+            leaderboard_lines = [f"🏆 Leaderboard for: {escape_markdown(quiz_title)} 🏆\n"]
             for idx, (user_id, score) in enumerate(top_scores):
                 try:
                     member = await context.bot.get_chat_member(chat_id, int(user_id))
@@ -520,7 +618,7 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE, quiz_i
                 except Exception as user_e:
                     logger.warning(f"Failed to get user info for {user_id}: {user_e}")
                     name = f"User {user_id}"
-                leaderboard_lines.append(f"*{idx + 1}\\.* {name}: *{score}*")
+                leaderboard_lines.append(f"{idx + 1}. {name}: {score}")
                 
             leaderboard_text = "\n".join(leaderboard_lines)
             
@@ -528,7 +626,7 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE, quiz_i
             if redis_client.is_available:
                 redis_client.setex(cache_key, Config.LEADERBOARD_CACHE_TTL, leaderboard_text)
                 
-            await context.bot.send_message(chat_id, leaderboard_text, parse_mode='MarkdownV2')
+            await context.bot.send_message(chat_id, leaderboard_text)
             
     except Exception as e:
         logger.error(f"Error getting leaderboard: {e}")
@@ -553,21 +651,22 @@ async def stop_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @admin_required
 async def reset_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Reset the leaderboard for a specific quiz."""
+    """Reset the leaderboard for a specific quiz by ID or title."""
     if not context.args:
-        await update.message.reply_text("ℹ️ Please provide a Quiz ID. Usage: `/reset_leaderboard <quiz_id>`")
+        await update.message.reply_text("ℹ️ Please provide a Quiz ID or title. Usage: `/reset_leaderboard <quiz_id_or_title>`")
         return
     
-    quiz_id_str = context.args[0]
+    # Join all arguments in case title has spaces
+    query = " ".join(context.args)
     
-    # Validate quiz_id is numeric
-    try:
-        quiz_id = int(quiz_id_str)
-        if quiz_id <= 0:
-            raise ValueError("Quiz ID must be positive")
-    except ValueError:
-        await update.message.reply_text("❌ Invalid Quiz ID. Please provide a valid numeric ID.")
+    # Find quiz by ID or title
+    quiz_data, error_message = await _find_quiz_by_title_or_id(query)
+    if not quiz_data:
+        await update.message.reply_text(error_message)
         return
+    
+    quiz_id = quiz_data['id']
+    quiz_title = quiz_data['title']
     
     try:
         with get_db_session() as session:
@@ -576,9 +675,13 @@ async def reset_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 lb.user_scores = {}
                 # Invalidate cache
                 redis_client.delete(redis_key_leaderboard(quiz_id))
-                await update.message.reply_text(f"✅ Leaderboard for quiz `{quiz_id}` has been reset.")
+                await update.message.reply_text(
+                    f"✅ Leaderboard for quiz \"{escape_markdown(quiz_title)}\" (ID: `{quiz_id}`) has been reset."
+                )
             else:
-                await update.message.reply_text(f"ℹ️ No leaderboard found for quiz `{quiz_id}`.")
+                await update.message.reply_text(
+                    f"ℹ️ No leaderboard found for quiz \"{escape_markdown(quiz_title)}\" (ID: `{quiz_id}`)."
+                )
     except Exception as e:
         logger.error(f"Error resetting leaderboard: {e}")
         await update.message.reply_text("❌ An error occurred while resetting the leaderboard.")

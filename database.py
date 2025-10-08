@@ -1,5 +1,6 @@
-from sqlalchemy import create_engine, Column, Integer, String, JSON, Boolean, event
+from sqlalchemy import create_engine, Column, Integer, String, JSON, Boolean, event, text
 from sqlalchemy.orm import declarative_base, scoped_session, sessionmaker
+from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.pool import QueuePool
 from contextlib import contextmanager
 from config import Config
@@ -29,11 +30,7 @@ def init_db_engine():
             'echo': False,  # Set to True for SQL debugging
             'connect_args': {
                 'connect_timeout': 10,
-                'command_timeout': 30,
-                'server_settings': {
-                    'statement_timeout': '30s',  # Prevent long-running queries
-                    'lock_timeout': '10s'
-                }
+                'options': '-c statement_timeout=30s -c lock_timeout=10s'
             }
         }
         
@@ -42,7 +39,7 @@ def init_db_engine():
         
         # Test connection
         with engine.connect() as conn:
-            conn.execute("SELECT 1")
+            conn.execute(text("SELECT 1"))
             
         logger.info("Database connection established successfully with production settings.")
         return True
@@ -112,6 +109,9 @@ class Leaderboard(Base):
         
         user_id_str = str(user_id)
         self.user_scores[user_id_str] = self.user_scores.get(user_id_str, 0) + points
+        
+        # CRITICAL FIX: Tell SQLAlchemy that the JSON field has been modified
+        flag_modified(self, 'user_scores')
         
     def get_top_scores(self, limit: int = 10) -> list:
         """Get top scores sorted by points."""
