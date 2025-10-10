@@ -1,5 +1,5 @@
 # Core dependencies with compatible version pinning for security updates
-python-telegram-bot~=20.3
+python-telegram-bot[job-queue]~=20.3
 SQLAlchemy~=2.0.19
 psycopg2-binary~=2.9.7
 redis~=4.5.5
