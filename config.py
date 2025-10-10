@@ -29,35 +29,55 @@ class Config:
     # Validate database configuration
     SQLALCHEMY_DATABASE_URI: Optional[str] = DATABASE_URL
     
-    # Redis
-    _raw_redis_host: str = os.getenv("REDIS_HOST", "redis")
-    _raw_redis_port: str = os.getenv("REDIS_PORT", "6379")
-
-    # Parse Redis host and port safely
-    if ':' in _raw_redis_host and not _raw_redis_host.startswith('redis://'):
+    # Redis Configuration - Heroku provides REDIS_URL, fallback to individual settings
+    REDIS_URL: Optional[str] = os.getenv("REDIS_URL")
+    
+    if REDIS_URL:
+        # Heroku Redis provides full URL like: redis://h:password@host:port
+        # Parse it for backwards compatibility with individual settings
+        import urllib.parse
         try:
-            _split_host = _raw_redis_host.split(':')
-            REDIS_HOST: str = _split_host[0]
-            REDIS_PORT: int = int(_split_host[1])
-        except (ValueError, IndexError) as e:
-            logger.warning(f"Invalid Redis host format: {_raw_redis_host}, using defaults")
-            REDIS_HOST = "redis"
-            REDIS_PORT = 6379
+            parsed = urllib.parse.urlparse(REDIS_URL)
+            REDIS_HOST = parsed.hostname or "redis"
+            REDIS_PORT = parsed.port or 6379
+            REDIS_PASSWORD = parsed.password
+            REDIS_DB = int(parsed.path.lstrip('/')) if parsed.path and parsed.path != '/' else 0
+        except (ValueError, AttributeError) as e:
+            logger.warning(f"Failed to parse REDIS_URL: {e}, using individual settings")
+            REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+            REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+            REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
+            REDIS_DB = int(os.getenv("REDIS_DB", "0"))
     else:
-        REDIS_HOST = _raw_redis_host
-        try:
-            REDIS_PORT = int(_raw_redis_port)
-        except ValueError:
-            logger.warning(f"Invalid Redis port: {_raw_redis_port}, using default 6379")
-            REDIS_PORT = 6379
+        # Fallback to individual Redis settings (for local development)
+        _raw_redis_host: str = os.getenv("REDIS_HOST", "redis")
+        _raw_redis_port: str = os.getenv("REDIS_PORT", "6379")
 
-    try:
-        REDIS_DB: int = int(os.getenv("REDIS_DB", "0"))
-    except ValueError:
-        logger.warning("Invalid REDIS_DB value, using default 0")
-        REDIS_DB = 0
-        
-    REDIS_PASSWORD: Optional[str] = os.getenv("REDIS_PASSWORD")
+        # Parse Redis host and port safely
+        if ':' in _raw_redis_host and not _raw_redis_host.startswith('redis://'):
+            try:
+                _split_host = _raw_redis_host.split(':')
+                REDIS_HOST: str = _split_host[0]
+                REDIS_PORT: int = int(_split_host[1])
+            except (ValueError, IndexError) as e:
+                logger.warning(f"Invalid Redis host format: {_raw_redis_host}, using defaults")
+                REDIS_HOST = "redis"
+                REDIS_PORT = 6379
+        else:
+            REDIS_HOST = _raw_redis_host
+            try:
+                REDIS_PORT = int(_raw_redis_port)
+            except ValueError:
+                logger.warning(f"Invalid Redis port: {_raw_redis_port}, using default 6379")
+                REDIS_PORT = 6379
+
+        try:
+            REDIS_DB: int = int(os.getenv("REDIS_DB", "0"))
+        except ValueError:
+            logger.warning("Invalid REDIS_DB value, using default 0")
+            REDIS_DB = 0
+            
+        REDIS_PASSWORD: Optional[str] = os.getenv("REDIS_PASSWORD")
     
     # Admin IDs with better error handling
     _admin_ids_str: str = os.getenv("ADMIN_IDS", "")

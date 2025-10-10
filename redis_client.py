@@ -29,23 +29,36 @@ class RedisClient:
         self.last_connection_attempt = current_time
         
         try:
-            # Create connection pool for better performance
-            self.pool = redis.ConnectionPool(
-                host=Config.REDIS_HOST,
-                port=Config.REDIS_PORT,
-                db=Config.REDIS_DB,
-                password=Config.REDIS_PASSWORD,
-                max_connections=20,
-                retry_on_timeout=True,
-                socket_connect_timeout=5,
-                socket_timeout=5,
-                decode_responses=True
-            )
-            
-            self.client = redis.Redis(
-                connection_pool=self.pool,
-                health_check_interval=Config.REDIS_HEALTH_CHECK_INTERVAL if hasattr(Config, 'REDIS_HEALTH_CHECK_INTERVAL') else 30
-            )
+            # Check if we have REDIS_URL (Heroku Redis) or individual settings
+            if hasattr(Config, 'REDIS_URL') and Config.REDIS_URL:
+                # Use Heroku Redis URL
+                self.client = redis.from_url(
+                    Config.REDIS_URL,
+                    max_connections=20,
+                    retry_on_timeout=True,
+                    socket_connect_timeout=5,
+                    socket_timeout=5,
+                    decode_responses=True,
+                    health_check_interval=Config.REDIS_HEALTH_CHECK_INTERVAL if hasattr(Config, 'REDIS_HEALTH_CHECK_INTERVAL') else 30
+                )
+            else:
+                # Use individual Redis settings (local development)
+                self.pool = redis.ConnectionPool(
+                    host=Config.REDIS_HOST,
+                    port=Config.REDIS_PORT,
+                    db=Config.REDIS_DB,
+                    password=Config.REDIS_PASSWORD,
+                    max_connections=20,
+                    retry_on_timeout=True,
+                    socket_connect_timeout=5,
+                    socket_timeout=5,
+                    decode_responses=True
+                )
+                
+                self.client = redis.Redis(
+                    connection_pool=self.pool,
+                    health_check_interval=Config.REDIS_HEALTH_CHECK_INTERVAL if hasattr(Config, 'REDIS_HEALTH_CHECK_INTERVAL') else 30
+                )
             
             # Test connection
             self.client.ping()
