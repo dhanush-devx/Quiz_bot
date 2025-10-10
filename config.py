@@ -29,7 +29,7 @@ class Config:
     # Validate database configuration
     SQLALCHEMY_DATABASE_URI: Optional[str] = DATABASE_URL
     
-    # Redis Configuration - Heroku provides REDIS_URL, fallback to individual settings
+    # Redis Configuration - Heroku provides REDIS_URL or REDISCLOUD_URL, fallback to individual settings
     REDIS_URL: Optional[str] = os.getenv("REDIS_URL") or os.getenv("REDISCLOUD_URL")
     
     if REDIS_URL:

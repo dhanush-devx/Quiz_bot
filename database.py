@@ -30,7 +30,8 @@ def init_db_engine():
             'echo': False,  # Set to True for SQL debugging
             'connect_args': {
                 'connect_timeout': 10,
-                'options': '-c statement_timeout=30s -c lock_timeout=10s'
+                'options': '-c statement_timeout=30s -c lock_timeout=10s',
+                'sslmode': 'require'  # Force SSL connection
             }
         }
         
