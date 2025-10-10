@@ -31,7 +31,10 @@ def init_db_engine():
             'connect_args': {
                 'connect_timeout': 10,
                 'options': '-c statement_timeout=30s -c lock_timeout=10s',
-                'sslmode': 'require'  # Force SSL connection
+                'sslmode': 'prefer',  # Try SSL but fallback if needed
+                'sslcert': None,
+                'sslkey': None,
+                'sslrootcert': None
             }
         }
         
