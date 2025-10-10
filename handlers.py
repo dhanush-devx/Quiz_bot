@@ -136,14 +136,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/reset_leaderboard <id_or_title> - Clear the scores for a quiz.\n"
             "/health - Check bot system status.\n\n"
             "User Commands:\n"
-            "/leaderboard [title of quiz] - Show the scores for the current or specified quiz."
+            "/leaderboard [title of quiz] - Show the scores/leaderboard for the current or specified quiz."
         )
     else:
         # Regular user welcome message with limited commands
         welcome_text = (
             "Welcome to the StellarQuiz Bot! 🎯\n\n"
             "User Commands:\n"
-            "/leaderboard [name of the quiz] - Show the scores of that quiz."
+            "/leaderboard [name of the quiz] - Show the scores/leaderboard of that quiz."
         )
     
     await update.message.reply_text(welcome_text)
@@ -164,15 +164,15 @@ async def health(update: Update, context: ContextTypes.DEFAULT_TYPE):
         bot_info = await context.bot.get_me()
         
         health_message = (
-            f"🏥 *System Health Status*\n\n"
-            f"*Bot:* 🟢 @{escape_markdown(bot_info.username)}\n"
-            f"*Database:* {db_status}\n"
-            f"*Redis Cache:* {redis_status}\n"
-            f"*Active Chats:* {len(context.job_queue.jobs)}\n\n"
-            f"*Configuration:*\n"
-            f"*Question Duration:* {QUESTION_DURATION_SECONDS}s\n"
-            f"*Max Questions:* {Config.MAX_QUESTIONS_PER_QUIZ}\n"
-            f"*Admin Count:* {len(Config.ADMIN_IDS)}"
+            f"🏥 System Health Status\n\n"
+            f"Bot: 🟢 @{bot_info.username}\n"
+            f"Database: {db_status}\n"
+            f"Redis Cache: {redis_status}\n"
+            f"Active Chats: {len(context.job_queue.jobs())}\n\n"
+            f"Configuration:\n"
+            f"Question Duration: {QUESTION_DURATION_SECONDS}s\n"
+            f"Max Questions: {Config.MAX_QUESTIONS_PER_QUIZ}\n"
+            f"Admin Count: {len(Config.ADMIN_IDS)}"
         )
         
         await update.message.reply_text(health_message)

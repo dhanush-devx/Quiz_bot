@@ -2,7 +2,7 @@ import logging
 import signal
 import sys
 import asyncio
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, PollAnswerHandler
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, PollAnswerHandler, JobQueue
 from telegram.ext import AIORateLimiter
 from handlers import (
     start, create_quiz, done, start_quiz, 
@@ -85,6 +85,7 @@ def main():
             .connect_timeout(30)
             .read_timeout(30)
             .pool_timeout(30)
+            .job_queue(JobQueue())
             .build()
         )
         
@@ -110,12 +111,7 @@ def main():
         
         # Start polling with production settings
         application.run_polling(
-            drop_pending_updates=True,  # Clean start
-            timeout=30,  # Request timeout
-            read_timeout=30,  # Read timeout
-            connect_timeout=30,  # Connection timeout
-            pool_timeout=30,  # Connection pool timeout
-            close_loop=False  # Keep event loop open for graceful shutdown
+            drop_pending_updates=True  # Clean start
         )
         
     except Exception as e:
