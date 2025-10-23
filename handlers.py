@@ -130,20 +130,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         welcome_text = (
             "Welcome to the StellarQuiz Bot! 🎯\n\n"
             "Admin Commands:\n"
-            "/create_quiz - Start creating a new quiz (in a private chat with me).\n"
+            "/create_quiz - creating a new quiz.\n"
             "/start_quiz <id_or_title> - Begin a quiz in a group.\n"
             "/stop_quiz - Forcefully stop the active quiz in a group.\n"
-            "/reset_leaderboard <id_or_title> - Clear the scores for a quiz.\n"
+            "/reset_leaderboard <id_or_title> - reset the scores for a quiz.\n"
             "/health - Check bot system status.\n\n"
             "User Commands:\n"
-            "/leaderboard [title of quiz] - Show the scores/leaderboard for the current or specified quiz."
+            "/leaderboard [quiz name] - To see leaderboard for the current or specified quiz."
         )
     else:
         # Regular user welcome message with limited commands
         welcome_text = (
             "Welcome to the StellarQuiz Bot! 🎯\n\n"
             "User Commands:\n"
-            "/leaderboard [name of the quiz] - Show the scores/leaderboard of that quiz."
+            "/leaderboard [quiz name] - To see leaderboard for the current or specified quiz."
         )
     
     await update.message.reply_text(welcome_text)
