@@ -78,6 +78,9 @@ def main():
     global application
     
     try:
+        # Create job queue with custom configuration to handle missed jobs
+        job_queue = JobQueue()
+        
         application = (
             ApplicationBuilder()
             .token(Config.BOT_TOKEN)
@@ -85,9 +88,12 @@ def main():
             .connect_timeout(30)
             .read_timeout(30)
             .pool_timeout(30)
-            .job_queue(JobQueue())
+            .job_queue(job_queue)
             .build()
         )
+        
+        # Configure APScheduler to run missed jobs (coalesce multiple missed executions into one)
+        job_queue.scheduler.configure(misfire_grace_time=30)  # Run jobs up to 30 seconds late
         
         # Command handlers
         application.add_handler(CommandHandler("start", start))
