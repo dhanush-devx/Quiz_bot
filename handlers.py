@@ -8,6 +8,7 @@ from redis_client import redis_client, redis_key_active_quiz, redis_key_poll_dat
 from config import Config
 from enum import IntEnum
 from functools import wraps
+from sqlalchemy.orm.attributes import flag_modified
 import json
 
 # --- Configuration & Constants ---
@@ -510,7 +511,7 @@ async def _end_question(context: ContextTypes.DEFAULT_TYPE):
         await _end_quiz(context, chat_id, quiz_id)
 
 async def _end_quiz(context, chat_id, quiz_id):
-    """Cleans up Redis, removes scheduled jobs, and shows the final leaderboard."""
+    """Cleans up Redis, removes scheduled jobs, persists scores to DB, and shows the final leaderboard."""
     # Remove any remaining scheduled jobs for this quiz
     jobs = context.job_queue.get_jobs_by_name(f"quiz_{chat_id}")
     if jobs:
@@ -518,7 +519,38 @@ async def _end_quiz(context, chat_id, quiz_id):
             job.schedule_removal()
         logger.info(f"Removed {len(jobs)} scheduled jobs for quiz {quiz_id} in chat {chat_id}")
     
-    # Clean up Redis
+    # Persist Redis scores to database before cleanup
+    if redis_client:
+        redis_score_key = f"quiz_scores:{quiz_id}"
+        try:
+            # Get all scores from Redis
+            redis_scores = redis_client.client.hgetall(redis_score_key)
+            if redis_scores:
+                # Convert bytes to proper types and save to database
+                with get_db_session() as session:
+                    lb = session.query(Leaderboard).filter_by(quiz_id=quiz_id).first()
+                    if not lb:
+                        lb = Leaderboard(quiz_id=quiz_id, user_scores={})
+                        session.add(lb)
+                    
+                    # Merge Redis scores with existing DB scores
+                    for user_id_bytes, score_bytes in redis_scores.items():
+                        user_id = int(user_id_bytes.decode() if isinstance(user_id_bytes, bytes) else user_id_bytes)
+                        score = int(score_bytes.decode() if isinstance(score_bytes, bytes) else score_bytes)
+                        
+                        # Add the Redis score to existing DB score
+                        current_score = lb.user_scores.get(str(user_id), 0)
+                        lb.user_scores[str(user_id)] = current_score + score
+                    
+                    flag_modified(lb, 'user_scores')
+                    logger.info(f"Persisted {len(redis_scores)} scores from Redis to DB for quiz {quiz_id}")
+                
+                # Clean up Redis scores after persisting
+                redis_client.delete(redis_score_key)
+        except Exception as e:
+            logger.error(f"Error persisting Redis scores to DB for quiz {quiz_id}: {e}")
+    
+    # Clean up Redis active quiz marker
     if redis_client:
         redis_client.delete(redis_key_active_quiz(chat_id))
         logger.info(f"Cleaned up Redis for quiz {quiz_id} in chat {chat_id}")
@@ -551,31 +583,36 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     if answer.option_ids and answer.option_ids[0] == correct_option:
         user_id = str(answer.user.id)
-        correlation_id = f"score_update_{quiz_id}_{user_id}_{int(time.time())}"
         
-        # Run in background to avoid blocking the job queue
-        async def update_score():
-            try:
-                with get_db_session() as session:
-                    # Use row-level locking to prevent race conditions
-                    lb = session.query(Leaderboard).filter_by(quiz_id=quiz_id).with_for_update(skip_locked=True).first()
-                    if not lb:
-                        lb = Leaderboard(quiz_id=quiz_id, user_scores={})
-                        session.add(lb)
-                    
-                    # Add score using the model method
-                    lb.add_score(int(user_id))
-                    
-                    # Invalidate leaderboard cache
-                    redis_client.delete(redis_key_leaderboard(quiz_id))
-                    
-                    logger.info(f"Score updated successfully for user {user_id} in quiz {quiz_id} [{correlation_id}]")
-                    
-            except Exception as e:
-                logger.error(f"Error updating leaderboard [{correlation_id}]: {e}")
-        
-        # Execute asynchronously without waiting
-        asyncio.create_task(update_score())
+        # Use Redis for immediate score tracking (much faster than DB)
+        redis_score_key = f"quiz_scores:{quiz_id}"
+        try:
+            # Increment score in Redis (atomic operation, no locks needed)
+            redis_client.client.hincrby(redis_score_key, user_id, 1)
+            # Set expiry on the key (auto-cleanup after 24 hours)
+            redis_client.client.expire(redis_score_key, 86400)
+            
+            # Invalidate leaderboard cache so it will be rebuilt from Redis + DB
+            redis_client.delete(redis_key_leaderboard(quiz_id))
+            
+            logger.info(f"Score incremented in Redis for user {user_id} in quiz {quiz_id}")
+        except Exception as e:
+            logger.error(f"Error updating Redis score for user {user_id}: {e}")
+            
+            # Fallback to async database update if Redis fails
+            async def update_score_db():
+                try:
+                    with get_db_session() as session:
+                        lb = session.query(Leaderboard).filter_by(quiz_id=quiz_id).with_for_update(skip_locked=True).first()
+                        if not lb:
+                            lb = Leaderboard(quiz_id=quiz_id, user_scores={})
+                            session.add(lb)
+                        lb.add_score(int(user_id))
+                        logger.info(f"Score updated in DB for user {user_id} in quiz {quiz_id}")
+                except Exception as db_e:
+                    logger.error(f"Error updating DB score for user {user_id}: {db_e}")
+            
+            asyncio.create_task(update_score_db())
 
 async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE, quiz_id_override=None):
     """Display the leaderboard for the active or specified quiz."""
@@ -615,6 +652,21 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE, quiz_i
             return
     
     try:
+        # Merge scores from Redis (active quiz) and DB (historical)
+        combined_scores = {}
+        
+        # Get Redis scores for active quiz
+        redis_score_key = f"quiz_scores:{quiz_id}"
+        if redis_client.is_available:
+            try:
+                redis_scores = redis_client.client.hgetall(redis_score_key)
+                for user_id_bytes, score_bytes in redis_scores.items():
+                    user_id = str(int(user_id_bytes.decode() if isinstance(user_id_bytes, bytes) else user_id_bytes))
+                    score = int(score_bytes.decode() if isinstance(score_bytes, bytes) else score_bytes)
+                    combined_scores[user_id] = score
+            except Exception as redis_e:
+                logger.warning(f"Could not fetch Redis scores: {redis_e}")
+        
         # Use read-only session for leaderboard (no writes needed)
         with get_db_session(readonly=True) as session:
             lb = session.query(Leaderboard).filter_by(quiz_id=quiz_id).first()
@@ -628,12 +680,17 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE, quiz_i
                 await context.bot.send_message(chat_id, "❌ Quiz not found.")
                 return
 
-            if not lb or not lb.user_scores:
+            # Merge DB scores with Redis scores
+            if lb and lb.user_scores:
+                for user_id, score in lb.user_scores.items():
+                    combined_scores[user_id] = combined_scores.get(user_id, 0) + score
+            
+            if not combined_scores:
                 await context.bot.send_message(chat_id, f"🏆 Leaderboard for \"{escape_markdown(quiz_title)}\" is empty!")
                 return
             
-            # Use the model's helper method
-            top_scores = lb.get_top_scores(Config.MAX_LEADERBOARD_ENTRIES)
+            # Sort by score descending
+            top_scores = sorted(combined_scores.items(), key=lambda x: x[1], reverse=True)[:Config.MAX_LEADERBOARD_ENTRIES]
             
             leaderboard_lines = [f"🏆 Leaderboard for: {escape_markdown(quiz_title)} 🏆\n"]
             for idx, (user_id, score) in enumerate(top_scores):
