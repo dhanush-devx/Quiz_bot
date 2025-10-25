@@ -20,17 +20,18 @@ def init_db_engine():
     
     try:
         # Engine configuration with connection pooling and production settings
+        # Optimized for low-latency job queue operations
         engine_config = {
-            'pool_size': 10,
-            'max_overflow': 20,
+            'pool_size': 20,  # Increased to handle concurrent async tasks
+            'max_overflow': 30,  # More overflow for burst traffic
             'pool_pre_ping': True,
             'pool_recycle': 3600,  # Recycle connections every hour
-            'pool_timeout': 30,  # Fail fast after 30 seconds
+            'pool_timeout': 5,  # Fail fast - get connection quickly or fail
             'poolclass': QueuePool,
             'echo': False,  # Set to True for SQL debugging
             'connect_args': {
-                'connect_timeout': 10,
-                'options': '-c statement_timeout=30s -c lock_timeout=10s',
+                'connect_timeout': 5,  # Quick connection
+                'options': '-c statement_timeout=5s -c lock_timeout=500ms',  # Fast timeouts for job queue
                 'sslmode': 'prefer',  # Try SSL but fallback if needed
                 'sslcert': None,
                 'sslkey': None,
@@ -53,14 +54,25 @@ def init_db_engine():
         raise
 
 @contextmanager
-def get_db_session():
-    """Context manager for database sessions with automatic cleanup and nested transaction support."""
-    session = Session()
+def get_db_session(readonly=False):
+    """Context manager for database sessions with automatic cleanup and nested transaction support.
+    
+    Args:
+        readonly: If True, creates a session optimized for read-only operations (no autoflush).
+    """
+    if readonly:
+        # For read-only operations, use a session without autoflush for better performance
+        session = Session(autoflush=False, expire_on_commit=False)
+    else:
+        session = Session()
+    
     try:
         yield session
-        session.commit()
+        if not readonly:
+            session.commit()
     except Exception as e:
-        session.rollback()
+        if not readonly:
+            session.rollback()
         logger.error(f"Database session error: {e}")
         raise
     finally:

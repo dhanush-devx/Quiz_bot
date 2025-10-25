@@ -399,7 +399,8 @@ async def _send_question(context: ContextTypes.DEFAULT_TYPE):
     q_index = job_data['q_index']
 
     try:
-        with get_db_session() as session:
+        # Use read-only session for fetching quiz data (faster, no locks)
+        with get_db_session(readonly=True) as session:
             quiz = session.query(Quiz).filter_by(id=quiz_id).first()
             if not quiz or q_index >= len(quiz.questions):
                 # This case handles if the quiz is deleted mid-run
@@ -479,7 +480,8 @@ async def _end_question(context: ContextTypes.DEFAULT_TYPE):
         logger.warning(f"Could not stop poll (it might have been closed already): {e}")
 
     try:
-        with get_db_session() as session:
+        # Use read-only session for fetching quiz data (faster, no locks)
+        with get_db_session(readonly=True) as session:
             quiz = session.query(Quiz).filter_by(id=quiz_id).first()
             if not quiz:
                 logger.error(f"Quiz {quiz_id} not found in database!")
@@ -508,9 +510,18 @@ async def _end_question(context: ContextTypes.DEFAULT_TYPE):
         await _end_quiz(context, chat_id, quiz_id)
 
 async def _end_quiz(context, chat_id, quiz_id):
-    """Cleans up Redis and shows the final leaderboard."""
+    """Cleans up Redis, removes scheduled jobs, and shows the final leaderboard."""
+    # Remove any remaining scheduled jobs for this quiz
+    jobs = context.job_queue.get_jobs_by_name(f"quiz_{chat_id}")
+    if jobs:
+        for job in jobs:
+            job.schedule_removal()
+        logger.info(f"Removed {len(jobs)} scheduled jobs for quiz {quiz_id} in chat {chat_id}")
+    
+    # Clean up Redis
     if redis_client:
         redis_client.delete(redis_key_active_quiz(chat_id))
+        logger.info(f"Cleaned up Redis for quiz {quiz_id} in chat {chat_id}")
     
     # Use a new update object for the leaderboard command context
     class MockUpdate:
@@ -604,7 +615,8 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE, quiz_i
             return
     
     try:
-        with get_db_session() as session:
+        # Use read-only session for leaderboard (no writes needed)
+        with get_db_session(readonly=True) as session:
             lb = session.query(Leaderboard).filter_by(quiz_id=quiz_id).first()
             # Get quiz info if we don't have it already
             if not quiz_title:
