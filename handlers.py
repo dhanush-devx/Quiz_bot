@@ -636,18 +636,27 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE, quiz_i
 async def stop_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Forcefully stops the current quiz in a chat."""
     chat_id = update.effective_chat.id
+    
+    # Check both job queue and Redis for active quiz
     jobs = context.job_queue.get_jobs_by_name(f"quiz_{chat_id}")
-    if not jobs:
-        await update.message.reply_text("ℹ️ No quiz is currently running in this chat.")
+    redis_quiz_key = redis_key_active_quiz(chat_id)
+    quiz_id = redis_client.get(redis_quiz_key) if redis_client else None
+    
+    # If neither jobs nor Redis has active quiz, nothing to stop
+    if not jobs and not quiz_id:
+        await update.message.reply_text("📭 No quiz is currently running in this chat.")
         return
 
-    for job in jobs:
-        job.schedule_removal()
+    # Stop any active jobs
+    if jobs:
+        for job in jobs:
+            job.schedule_removal()
 
-    quiz_id = redis_client.get(redis_key_active_quiz(chat_id)) if redis_client else None
-    await update.message.reply_text("🛑 The quiz has been manually stopped by an admin.")
+    # Clean up Redis even if no jobs exist (handles stale data)
     if quiz_id:
         await _end_quiz(context, chat_id, quiz_id)
+    
+    await update.message.reply_text("🛑 The quiz has been manually stopped by an admin.")
 
 @admin_required
 async def reset_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
