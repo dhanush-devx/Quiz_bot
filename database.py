@@ -60,11 +60,13 @@ def get_db_session(readonly=False):
     Args:
         readonly: If True, creates a session optimized for read-only operations (no autoflush).
     """
+    # Get the session from scoped_session (always returns the same session in a thread)
+    session = Session()
+    
+    # Configure session based on readonly flag
     if readonly:
-        # For read-only operations, use a session without autoflush for better performance
-        session = Session(autoflush=False, expire_on_commit=False)
-    else:
-        session = Session()
+        session.autoflush = False
+        session.expire_on_commit = False
     
     try:
         yield session
@@ -77,6 +79,8 @@ def get_db_session(readonly=False):
         raise
     finally:
         session.close()
+        # Remove the session from the registry to allow new sessions with different configs
+        Session.remove()
 
 class Quiz(Base):
     __tablename__ = 'quizzes'
