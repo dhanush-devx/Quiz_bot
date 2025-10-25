@@ -470,6 +470,8 @@ async def _end_question(context: ContextTypes.DEFAULT_TYPE):
     poll_id = job_data['poll_id']
     message_id = job_data['message_id']
 
+    logger.info(f"_end_question called: chat_id={chat_id}, quiz_id={quiz_id}, next_q_index={next_q_index}")
+
     # Stop the previous poll
     try:
         await context.bot.stop_poll(chat_id, message_id)
@@ -480,10 +482,15 @@ async def _end_question(context: ContextTypes.DEFAULT_TYPE):
         with get_db_session() as session:
             quiz = session.query(Quiz).filter_by(id=quiz_id).first()
             if not quiz:
+                logger.error(f"Quiz {quiz_id} not found in database!")
                 return
+
+            total_questions = len(quiz.questions)
+            logger.info(f"Quiz has {total_questions} questions, next_q_index={next_q_index}")
 
             # Check if there are more questions
             if next_q_index < len(quiz.questions):
+                logger.info(f"Scheduling next question {next_q_index + 1}/{total_questions}")
                 # Schedule the next question
                 context.job_queue.run_once(
                     _send_question,
@@ -492,11 +499,12 @@ async def _end_question(context: ContextTypes.DEFAULT_TYPE):
                     name=f"quiz_{chat_id}"
                 )
             else:
+                logger.info(f"Quiz {quiz_id} finished. Showing final leaderboard.")
                 # End of the quiz
                 await context.bot.send_message(chat_id, "🏁 The quiz has finished! 🏁")
                 await _end_quiz(context, chat_id, quiz_id)
     except Exception as e:
-        logger.error(f"Error in _end_question: {e}")
+        logger.error(f"Error in _end_question: {e}", exc_info=True)
         await _end_quiz(context, chat_id, quiz_id)
 
 async def _end_quiz(context, chat_id, quiz_id):
