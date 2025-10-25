@@ -534,24 +534,29 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
         user_id = str(answer.user.id)
         correlation_id = f"score_update_{quiz_id}_{user_id}_{int(time.time())}"
         
-        try:
-            with get_db_session() as session:
-                # Use row-level locking to prevent race conditions
-                lb = session.query(Leaderboard).filter_by(quiz_id=quiz_id).with_for_update().first()
-                if not lb:
-                    lb = Leaderboard(quiz_id=quiz_id, user_scores={})
-                    session.add(lb)
-                
-                # Add score using the model method
-                lb.add_score(int(user_id))
-                
-                # Invalidate leaderboard cache
-                redis_client.delete(redis_key_leaderboard(quiz_id))
-                
-                logger.info(f"Score updated successfully for user {user_id} in quiz {quiz_id} [{correlation_id}]")
-                
-        except Exception as e:
-            logger.error(f"Error updating leaderboard [{correlation_id}]: {e}")
+        # Run in background to avoid blocking the job queue
+        async def update_score():
+            try:
+                with get_db_session() as session:
+                    # Use row-level locking to prevent race conditions
+                    lb = session.query(Leaderboard).filter_by(quiz_id=quiz_id).with_for_update(skip_locked=True).first()
+                    if not lb:
+                        lb = Leaderboard(quiz_id=quiz_id, user_scores={})
+                        session.add(lb)
+                    
+                    # Add score using the model method
+                    lb.add_score(int(user_id))
+                    
+                    # Invalidate leaderboard cache
+                    redis_client.delete(redis_key_leaderboard(quiz_id))
+                    
+                    logger.info(f"Score updated successfully for user {user_id} in quiz {quiz_id} [{correlation_id}]")
+                    
+            except Exception as e:
+                logger.error(f"Error updating leaderboard [{correlation_id}]: {e}")
+        
+        # Execute asynchronously without waiting
+        asyncio.create_task(update_score())
 
 async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE, quiz_id_override=None):
     """Display the leaderboard for the active or specified quiz."""
