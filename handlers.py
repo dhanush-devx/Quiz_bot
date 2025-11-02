@@ -123,6 +123,11 @@ async def _find_quiz_by_title_or_id(query: str) -> tuple:
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send a welcome message with role-based instructions."""
+    # Defensive check: ensure update.message exists
+    if not getattr(update, "message", None):
+        logger.warning("start: update.message is None")
+        return
+    
     # Check if user is an admin
     is_admin = await _is_admin(update)
     
@@ -152,6 +157,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @admin_required
 async def health(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Check system health status."""
+    # Defensive check
+    if not getattr(update, "message", None):
+        logger.warning("health: update.message is None")
+        return
+    
     try:
         from database import health_check as db_health
         
@@ -185,6 +195,11 @@ async def health(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @admin_required
 async def create_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Initiate the quiz creation process (admin only, private chat)."""
+    # Defensive check
+    if not getattr(update, "message", None):
+        logger.warning("create_quiz: update.message is None")
+        return
+    
     if update.effective_chat.type != "private":
         await update.message.reply_text("⚠️ Quiz creation should be done in a private chat with me to avoid spamming groups.")
         return
@@ -195,6 +210,10 @@ async def create_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_creation_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle messages during the quiz creation process."""
+    # Defensive check
+    if not getattr(update, "message", None) or not getattr(update.message, "text", None):
+        return
+    
     if 'state' not in context.user_data:
         return
 
@@ -232,6 +251,10 @@ async def handle_creation_message(update: Update, context: ContextTypes.DEFAULT_
 
 async def handle_creation_poll(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle polls sent during the quiz creation process."""
+    # Defensive checks
+    if not getattr(update, "message", None) or not getattr(update.message, "poll", None):
+        return
+    
     if 'state' not in context.user_data or context.user_data['state'] != QuizState.AWAITING_QUESTION:
         return
 
@@ -281,6 +304,11 @@ async def handle_creation_poll(update: Update, context: ContextTypes.DEFAULT_TYP
 @admin_required
 async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Finalize the quiz creation process."""
+    # Defensive check
+    if not getattr(update, "message", None):
+        logger.warning("done: update.message is None")
+        return
+    
     if 'quiz_creation' not in context.user_data:
         await update.message.reply_text("❌ No active quiz creation process found. Start with `/create_quiz`.")
         return
@@ -329,6 +357,11 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @admin_required
 async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Start a quiz in a group by ID or title."""
+    # Defensive check
+    if not getattr(update, "message", None):
+        logger.warning("start_quiz: update.message is None")
+        return
+    
     if not context.args:
         await update.message.reply_text("ℹ️ Please provide a Quiz ID or title. Usage: `/start_quiz <quiz_id_or_title>`")
         return
@@ -569,10 +602,17 @@ async def _end_quiz(context, chat_id, quiz_id):
 
 async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Process a user's answer to a quiz poll and update their score with atomic operations."""
+    # Defensive checks
+    if not getattr(update, "poll_answer", None):
+        return
+    
+    answer = update.poll_answer
+    if not answer or not getattr(answer, "poll_id", None) or not getattr(answer, "user", None):
+        return
+    
     if not redis_client.is_available: 
         return
 
-    answer = update.poll_answer
     poll_data = redis_client.get_json(redis_key_poll_data(answer.poll_id))
     
     if not poll_data:
@@ -583,6 +623,21 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     if answer.option_ids and answer.option_ids[0] == correct_option:
         user_id = str(answer.user.id)
+        user = answer.user
+        
+        # Cache user information for leaderboard display
+        user_cache_key = f"user_info:{user_id}"
+        user_info = {
+            'id': user.id,
+            'username': user.username,
+            'first_name': user.first_name,
+            'last_name': user.last_name,
+            'full_name': user.full_name
+        }
+        try:
+            redis_client.set_json(user_cache_key, user_info, ex=86400)  # Cache for 24 hours
+        except Exception as cache_e:
+            logger.warning(f"Failed to cache user info for {user_id}: {cache_e}")
         
         # Use Redis for immediate score tracking (much faster than DB)
         redis_score_key = f"quiz_scores:{quiz_id}"
@@ -616,6 +671,11 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE, quiz_id_override=None):
     """Display the leaderboard for the active or specified quiz."""
+    # Defensive check
+    if not update.effective_chat:
+        logger.warning("leaderboard: effective_chat is None")
+        return
+    
     chat_id = update.effective_chat.id
     quiz_id = quiz_id_override
     quiz_title = None
@@ -694,12 +754,48 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE, quiz_i
             
             leaderboard_lines = [f"🏆 Leaderboard for: {escape_markdown(quiz_title)} 🏆\n"]
             for idx, (user_id, score) in enumerate(top_scores):
-                try:
-                    member = await context.bot.get_chat_member(chat_id, int(user_id))
-                    name = escape_markdown(member.user.full_name)
-                except Exception as user_e:
-                    logger.warning(f"Failed to get user info for {user_id}: {user_e}")
-                    name = f"User {user_id}"
+                name = None
+                
+                # Try to get cached user info from Redis first
+                if redis_client.is_available:
+                    try:
+                        user_cache_key = f"user_info:{user_id}"
+                        user_info = redis_client.get_json(user_cache_key)
+                        if user_info:
+                            if user_info.get('username'):
+                                name = f"@{user_info['username']}"
+                            elif user_info.get('full_name'):
+                                name = escape_markdown(user_info['full_name'])
+                    except Exception as cache_e:
+                        logger.debug(f"Cache miss for user {user_id}: {cache_e}")
+                
+                # If not in cache, try to get from Telegram API
+                if not name:
+                    try:
+                        # Try to get chat member info (works in groups)
+                        member = await context.bot.get_chat_member(chat_id, int(user_id))
+                        user = member.user
+                        
+                        # Prefer username with @, fallback to full name
+                        if user.username:
+                            name = f"@{user.username}"
+                        else:
+                            name = escape_markdown(user.full_name)
+                            
+                    except Exception as user_e:
+                        # Final fallback: try to get user info directly
+                        try:
+                            user = await context.bot.get_chat(int(user_id))
+                            if user.username:
+                                name = f"@{user.username}"
+                            elif getattr(user, 'full_name', None):
+                                name = escape_markdown(user.full_name)
+                            else:
+                                name = f"User {user_id}"
+                        except Exception as fallback_e:
+                            logger.warning(f"Failed to get user info for {user_id}: {user_e}, {fallback_e}")
+                            name = f"User {user_id}"
+                        
                 leaderboard_lines.append(f"{idx + 1}. {name}: {score}")
                 
             leaderboard_text = "\n".join(leaderboard_lines)
@@ -717,6 +813,11 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE, quiz_i
 @admin_required
 async def stop_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Forcefully stops the current quiz in a chat."""
+    # Defensive check
+    if not getattr(update, "message", None) or not update.effective_chat:
+        logger.warning("stop_quiz: update.message or effective_chat is None")
+        return
+    
     chat_id = update.effective_chat.id
     
     # Check both job queue and Redis for active quiz
@@ -743,6 +844,11 @@ async def stop_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @admin_required
 async def reset_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Reset the leaderboard for a specific quiz by ID or title."""
+    # Defensive check
+    if not getattr(update, "message", None):
+        logger.warning("reset_leaderboard: update.message is None")
+        return
+    
     if not context.args:
         await update.message.reply_text("ℹ️ Please provide a Quiz ID or title. Usage: `/reset_leaderboard <quiz_id_or_title>`")
         return
@@ -781,6 +887,10 @@ async def reset_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle regular text messages and route them appropriately."""
+    # Defensive check
+    if not getattr(update, "message", None):
+        return
+    
     # Route messages during quiz creation process
     if 'state' in context.user_data and context.user_data['state'] == QuizState.AWAITING_TITLE:
         await handle_creation_message(update, context)
@@ -791,6 +901,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_poll_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle poll messages and route them appropriately."""
+    # Defensive check
+    if not getattr(update, "message", None):
+        return
+    
     # Route polls during quiz creation process
     if 'state' in context.user_data and context.user_data['state'] == QuizState.AWAITING_QUESTION:
         await handle_creation_poll(update, context)
