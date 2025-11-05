@@ -12,8 +12,8 @@ class Config:
     # Telegram
     BOT_TOKEN: Optional[str] = os.getenv("BOT_TOKEN")
     
-    # PostgreSQL - Prioritize DATABASE_URL (full connection string)
-    DATABASE_URL: Optional[str] = os.getenv("DATABASE_URL")
+    # PostgreSQL - Prioritize RAILWAY_DATABASE_URL, then DATABASE_URL (Heroku-managed)
+    DATABASE_URL: Optional[str] = os.getenv("RAILWAY_DATABASE_URL") or os.getenv("DATABASE_URL")
     
     # Individual database settings (fallback for local development)
     DB_HOST: str = os.getenv("DB_HOST", "postgres")
@@ -41,8 +41,8 @@ class Config:
     # Validate database configuration
     SQLALCHEMY_DATABASE_URI: Optional[str] = DATABASE_URL
     
-    # Redis Configuration - Prioritize REDISCLOUD_URL (Heroku Redis addon), then REDIS_URL, then individual settings
-    REDIS_URL: Optional[str] = os.getenv("REDISCLOUD_URL") or os.getenv("REDIS_URL")
+    # Redis Configuration - Prioritize RAILWAY_REDIS_URL, then REDISCLOUD_URL (Heroku Redis addon), then REDIS_URL
+    REDIS_URL: Optional[str] = os.getenv("RAILWAY_REDIS_URL") or os.getenv("REDISCLOUD_URL") or os.getenv("REDIS_URL")
     
     if REDIS_URL:
         # Heroku Redis provides full URL like: redis://h:password@host:port
