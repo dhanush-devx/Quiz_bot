@@ -29,15 +29,21 @@ class RedisClient:
         self.last_connection_attempt = current_time
         
         try:
-            # Check if we have REDIS_URL (Heroku Redis) or individual settings
+            # Check if we have REDIS_URL (preferred for cloud services)
             if hasattr(Config, 'REDIS_URL') and Config.REDIS_URL:
-                # Use Heroku Redis URL
+                # Use Redis URL with Railway-optimized settings
                 self.client = redis.from_url(
                     Config.REDIS_URL,
                     max_connections=20,
                     retry_on_timeout=True,
-                    socket_connect_timeout=5,
-                    socket_timeout=5,
+                    socket_connect_timeout=30,  # Railway needs longer timeout
+                    socket_timeout=30,
+                    socket_keepalive=True,
+                    socket_keepalive_options={
+                        1: 1,     # TCP_KEEPIDLE
+                        2: 10,    # TCP_KEEPINTVL
+                        3: 5      # TCP_KEEPCNT
+                    },
                     decode_responses=True,
                     health_check_interval=Config.REDIS_HEALTH_CHECK_INTERVAL if hasattr(Config, 'REDIS_HEALTH_CHECK_INTERVAL') else 30
                 )
@@ -50,8 +56,14 @@ class RedisClient:
                     password=Config.REDIS_PASSWORD,
                     max_connections=20,
                     retry_on_timeout=True,
-                    socket_connect_timeout=5,
-                    socket_timeout=5,
+                    socket_connect_timeout=30,
+                    socket_timeout=30,
+                    socket_keepalive=True,
+                    socket_keepalive_options={
+                        1: 1,
+                        2: 10,
+                        3: 5
+                    },
                     decode_responses=True
                 )
                 

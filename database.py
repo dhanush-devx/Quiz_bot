@@ -20,22 +20,23 @@ def init_db_engine():
     
     try:
         # Engine configuration with connection pooling and production settings
-        # Optimized for low-latency job queue operations
+        # Optimized for Railway/cloud database connections
         engine_config = {
             'pool_size': 20,  # Increased to handle concurrent async tasks
             'max_overflow': 30,  # More overflow for burst traffic
             'pool_pre_ping': True,
-            'pool_recycle': 3600,  # Recycle connections every hour
-            'pool_timeout': 5,  # Fail fast - get connection quickly or fail
+            'pool_recycle': 300,  # Railway connections: shorter recycle (5 min)
+            'pool_timeout': 30,  # Railway needs more time for initial connection
             'poolclass': QueuePool,
             'echo': False,  # Set to True for SQL debugging
             'connect_args': {
-                'connect_timeout': 5,  # Quick connection
-                'options': '-c statement_timeout=5s -c lock_timeout=500ms',  # Fast timeouts for job queue
-                'sslmode': 'prefer',  # Try SSL but fallback if needed
-                'sslcert': None,
-                'sslkey': None,
-                'sslrootcert': None
+                'connect_timeout': 30,  # Railway requires longer timeout
+                'keepalives': 1,
+                'keepalives_idle': 30,
+                'keepalives_interval': 10,
+                'keepalives_count': 5,
+                'options': '-c statement_timeout=30s -c lock_timeout=10s',
+                'sslmode': 'require',  # Railway requires SSL
             }
         }
         

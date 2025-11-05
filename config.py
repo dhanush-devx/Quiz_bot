@@ -12,25 +12,37 @@ class Config:
     # Telegram
     BOT_TOKEN: Optional[str] = os.getenv("BOT_TOKEN")
     
-    # PostgreSQL
+    # PostgreSQL - Prioritize DATABASE_URL (full connection string)
+    DATABASE_URL: Optional[str] = os.getenv("DATABASE_URL")
+    
+    # Individual database settings (fallback for local development)
     DB_HOST: str = os.getenv("DB_HOST", "postgres")
     DB_PORT: str = os.getenv("DB_PORT", "5432")
     DB_USER: str = os.getenv("DB_USER", "quizbot")
     DB_PASS: Optional[str] = os.getenv("DB_PASS")
     DB_NAME: str = os.getenv("DB_NAME", "quizbot_prod")
     
-    # Build database URL with proper validation
-    DATABASE_URL: Optional[str] = os.getenv("DATABASE_URL")
+    # Only build DATABASE_URL from individual vars if DATABASE_URL is not provided
     if not DATABASE_URL and DB_PASS:
         DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+        logger.info(f"Built DATABASE_URL from individual DB variables (host: {DB_HOST})")
     elif not DATABASE_URL:
+        logger.warning("No DATABASE_URL configured!")
         DATABASE_URL = None
+    else:
+        # Log which database we're connecting to (without exposing password)
+        try:
+            import urllib.parse
+            parsed = urllib.parse.urlparse(DATABASE_URL)
+            logger.info(f"Using DATABASE_URL from environment (host: {parsed.hostname})")
+        except:
+            logger.info("Using DATABASE_URL from environment")
     
     # Validate database configuration
     SQLALCHEMY_DATABASE_URI: Optional[str] = DATABASE_URL
     
-    # Redis Configuration - Heroku provides REDIS_URL or REDISCLOUD_URL, fallback to individual settings
-    REDIS_URL: Optional[str] = os.getenv("REDIS_URL") or os.getenv("REDISCLOUD_URL")
+    # Redis Configuration - Prioritize REDISCLOUD_URL (Heroku Redis addon), then REDIS_URL, then individual settings
+    REDIS_URL: Optional[str] = os.getenv("REDISCLOUD_URL") or os.getenv("REDIS_URL")
     
     if REDIS_URL:
         # Heroku Redis provides full URL like: redis://h:password@host:port
