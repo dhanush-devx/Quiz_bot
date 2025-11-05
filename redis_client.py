@@ -31,19 +31,11 @@ class RedisClient:
         try:
             # Check if we have REDIS_URL (Heroku Redis, Railway Redis) or individual settings
             if hasattr(Config, 'REDIS_URL') and Config.REDIS_URL:
-                # Detect if using Railway proxy or SSL (rediss://)
+                # Detect if using Railway proxy
                 is_railway = 'rlwy.net' in Config.REDIS_URL or 'railway' in Config.REDIS_URL.lower()
-                is_ssl = Config.REDIS_URL.startswith('rediss://')
                 
-                # SSL/TLS configuration for Railway
-                ssl_config = {}
-                if is_ssl:
-                    import ssl
-                    ssl_config = {
-                        'ssl': True,
-                        'ssl_cert_reqs': ssl.CERT_NONE,  # Railway uses self-signed certs
-                        'ssl_check_hostname': False,
-                    }
+                # For redis-py v5+, SSL is automatically handled via rediss:// URL scheme
+                # No need to pass ssl=True explicitly
                 
                 # Use Redis URL with Railway-optimized settings
                 self.client = redis.from_url(
@@ -59,8 +51,7 @@ class RedisClient:
                         3: 5,  # TCP_KEEPCNT
                     } if is_railway else None,
                     decode_responses=True,
-                    health_check_interval=Config.REDIS_HEALTH_CHECK_INTERVAL if hasattr(Config, 'REDIS_HEALTH_CHECK_INTERVAL') else 30,
-                    **ssl_config
+                    health_check_interval=Config.REDIS_HEALTH_CHECK_INTERVAL if hasattr(Config, 'REDIS_HEALTH_CHECK_INTERVAL') else 30
                 )
             else:
                 # Use individual Redis settings (local development)

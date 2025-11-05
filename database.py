@@ -19,7 +19,7 @@ def init_db_engine():
     global engine, Session
     
     try:
-                # Engine configuration with connection pooling and production settings
+        # Engine configuration with connection pooling and production settings
         # Optimized for Railway PostgreSQL proxy connections
         
         # Detect if using Railway (proxy URLs contain 'railway' or 'proxy.rlwy.net')
@@ -35,6 +35,7 @@ def init_db_engine():
             'echo': False,  # Set to True for SQL debugging
             'connect_args': {
                 'connect_timeout': 30,  # Railway proxy needs time
+                'sslmode': 'require',  # Always require SSL for Railway external connections
                 'keepalives': 1,
                 'keepalives_idle': 30,
                 'keepalives_interval': 10,
@@ -42,10 +43,8 @@ def init_db_engine():
             }
         }
         
-        # Railway requires SSL
-        if is_railway:
-            engine_config['connect_args']['sslmode'] = 'require'
-        else:
+        # For non-Railway databases, prefer SSL but don't require it
+        if not is_railway:
             engine_config['connect_args']['sslmode'] = 'prefer'
         
         engine = create_engine(Config.SQLALCHEMY_DATABASE_URI, **engine_config)
