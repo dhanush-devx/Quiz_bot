@@ -19,26 +19,34 @@ def init_db_engine():
     global engine, Session
     
     try:
-        # Engine configuration with connection pooling and production settings
-        # Optimized for Railway/cloud database connections
+                # Engine configuration with connection pooling and production settings
+        # Optimized for Railway PostgreSQL proxy connections
+        
+        # Detect if using Railway (proxy URLs contain 'railway' or 'proxy.rlwy.net')
+        is_railway = 'railway' in Config.SQLALCHEMY_DATABASE_URI.lower() or 'rlwy.net' in Config.SQLALCHEMY_DATABASE_URI.lower()
+        
         engine_config = {
             'pool_size': 20,  # Increased to handle concurrent async tasks
             'max_overflow': 30,  # More overflow for burst traffic
             'pool_pre_ping': True,
-            'pool_recycle': 300,  # Railway connections: shorter recycle (5 min)
-            'pool_timeout': 30,  # Railway needs more time for initial connection
+            'pool_recycle': 300,  # Recycle connections every 5 minutes for Railway
+            'pool_timeout': 30,  # Railway proxy needs longer timeout
             'poolclass': QueuePool,
             'echo': False,  # Set to True for SQL debugging
             'connect_args': {
-                'connect_timeout': 30,  # Railway requires longer timeout
+                'connect_timeout': 30,  # Railway proxy needs time
                 'keepalives': 1,
                 'keepalives_idle': 30,
                 'keepalives_interval': 10,
                 'keepalives_count': 5,
-                'options': '-c statement_timeout=30s -c lock_timeout=10s',
-                'sslmode': 'require',  # Railway requires SSL
             }
         }
+        
+        # Railway requires SSL
+        if is_railway:
+            engine_config['connect_args']['sslmode'] = 'require'
+        else:
+            engine_config['connect_args']['sslmode'] = 'prefer'
         
         engine = create_engine(Config.SQLALCHEMY_DATABASE_URI, **engine_config)
         Session = scoped_session(sessionmaker(bind=engine))
