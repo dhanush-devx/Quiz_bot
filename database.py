@@ -19,33 +19,25 @@ def init_db_engine():
     global engine, Session
     
     try:
-        # Engine configuration with connection pooling and production settings
-        # Optimized for Railway PostgreSQL proxy connections
-        
-        # Detect if using Railway (proxy URLs contain 'railway' or 'proxy.rlwy.net')
-        is_railway = 'railway' in Config.SQLALCHEMY_DATABASE_URI.lower() or 'rlwy.net' in Config.SQLALCHEMY_DATABASE_URI.lower()
+        # Engine configuration with connection pooling
+        # Railway TCP proxy uses plain (non-TLS) connections
         
         engine_config = {
-            'pool_size': 20,  # Increased to handle concurrent async tasks
-            'max_overflow': 30,  # More overflow for burst traffic
+            'pool_size': 20,
+            'max_overflow': 30,
             'pool_pre_ping': True,
-            'pool_recycle': 300,  # Recycle connections every 5 minutes for Railway
-            'pool_timeout': 30,  # Railway proxy needs longer timeout
+            'pool_recycle': 300,  # Recycle connections every 5 minutes
+            'pool_timeout': 30,
             'poolclass': QueuePool,
             'echo': False,  # Set to True for SQL debugging
             'connect_args': {
-                'connect_timeout': 30,  # Railway proxy needs time
-                'sslmode': 'require',  # Always require SSL for Railway external connections
+                'connect_timeout': 30,
                 'keepalives': 1,
                 'keepalives_idle': 30,
                 'keepalives_interval': 10,
                 'keepalives_count': 5,
             }
         }
-        
-        # For non-Railway databases, prefer SSL but don't require it
-        if not is_railway:
-            engine_config['connect_args']['sslmode'] = 'prefer'
         
         engine = create_engine(Config.SQLALCHEMY_DATABASE_URI, **engine_config)
         Session = scoped_session(sessionmaker(bind=engine))
