@@ -29,28 +29,19 @@ class RedisClient:
         self.last_connection_attempt = current_time
         
         try:
-            # Check if we have REDIS_URL (Heroku Redis, Railway Redis) or individual settings
+            # Check if we have REDIS_URL (supports Railway rediss://, Heroku redis://)
             if hasattr(Config, 'REDIS_URL') and Config.REDIS_URL:
-                # Detect if using Railway proxy
-                is_railway = 'rlwy.net' in Config.REDIS_URL or 'railway' in Config.REDIS_URL.lower()
-                
                 # For redis-py v5+, SSL is automatically handled via rediss:// URL scheme
-                # No need to pass ssl=True explicitly
+                # Do NOT pass ssl=True or any SSL kwargs - from_url handles it
                 
-                # Use Redis URL with Railway-optimized settings
+                # Use Redis URL - minimal, canonical approach
                 self.client = redis.from_url(
                     Config.REDIS_URL,
-                    max_connections=20,
-                    retry_on_timeout=True,
-                    socket_connect_timeout=30 if is_railway else 5,  # Railway needs longer timeout
-                    socket_timeout=30 if is_railway else 5,
-                    socket_keepalive=True,
-                    socket_keepalive_options={
-                        1: 1,  # TCP_KEEPIDLE
-                        2: 30,  # TCP_KEEPINTVL  
-                        3: 5,  # TCP_KEEPCNT
-                    } if is_railway else None,
                     decode_responses=True,
+                    socket_connect_timeout=30,  # Railway proxy needs time
+                    socket_timeout=30,
+                    socket_keepalive=True,
+                    retry_on_timeout=True,
                     health_check_interval=Config.REDIS_HEALTH_CHECK_INTERVAL if hasattr(Config, 'REDIS_HEALTH_CHECK_INTERVAL') else 30
                 )
             else:

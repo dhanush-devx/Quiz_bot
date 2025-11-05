@@ -64,15 +64,41 @@ if not Config.validate():
     logger.error("Configuration validation failed. Exiting.")
     exit(1)
 
-# Initialize database and load metrics
-try:
-    init_db_engine()
-    init_db()
-    metrics.load_metrics()
-    logger.info("Database and metrics initialized successfully.")
-except Exception as e:
-    logger.error(f"Failed to initialize database: {e}")
-    exit(1)
+# Initialize database and Redis with retry logic (resilient startup)
+import time
+MAX_RETRIES = 6
+SLEEP_BASE = 2
+
+for attempt in range(1, MAX_RETRIES + 1):
+    try:
+        logger.info(f"Initializing services (attempt {attempt}/{MAX_RETRIES})...")
+        
+        # Initialize database
+        init_db_engine()
+        init_db()
+        
+        # Test Redis connection
+        from redis_client import redis_client
+        if redis_client.is_available:
+            redis_client.client.ping()
+            logger.info("Redis connection verified")
+        else:
+            logger.warning("Redis not available - bot will run without cache")
+        
+        # Load metrics
+        metrics.load_metrics()
+        
+        logger.info("✅ All services initialized successfully")
+        break
+        
+    except Exception as e:
+        logger.error(f"❌ Startup attempt {attempt} failed: {e}")
+        if attempt == MAX_RETRIES:
+            logger.error("Max startup attempts reached. Exiting.")
+            exit(1)
+        sleep_duration = SLEEP_BASE * attempt
+        logger.info(f"Retrying in {sleep_duration} seconds...")
+        time.sleep(sleep_duration)
 
 def main():
     global application
