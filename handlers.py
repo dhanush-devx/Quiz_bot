@@ -405,14 +405,14 @@ async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🚀 The quiz '{escape_markdown(quiz_title)}' is about to begin!\n"
             f"📊 {len(quiz_questions)} questions\n"
             f"⏱️ {QUESTION_DURATION_SECONDS} seconds per question\n\n"
-            f"First question in 3 seconds..."
+            f"First question in 5 seconds..."
         )
         
         # Schedule the first question
         try:
             context.job_queue.run_once(
                 _send_question,
-                when=3,
+                when=5,
                 data={'chat_id': chat_id, 'quiz_id': quiz_id, 'q_index': 0},
                 name=f"quiz_{chat_id}"
             )
@@ -530,7 +530,7 @@ async def _end_question(context: ContextTypes.DEFAULT_TYPE):
                 # Schedule the next question
                 context.job_queue.run_once(
                     _send_question,
-                    when=3, # 3-second delay between questions
+                    when=0, # 0-second delay between questions
                     data={'chat_id': chat_id, 'quiz_id': quiz_id, 'q_index': next_q_index},
                     name=f"quiz_{chat_id}"
                 )
