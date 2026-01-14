@@ -242,7 +242,7 @@ async def handle_creation_message(update: Update, context: ContextTypes.DEFAULT_
             context.user_data['state'] = QuizState.AWAITING_QUESTION
             await update.message.reply_text(
                 "✅ Title set! Now, please send me your questions.\n\n"
-                "Create a poll, select **'Quiz mode'**, and choose the correct answer. Send them one by one.\n\n"
+                "Create a poll, select 'Quiz mode', and choose the correct answer. Send them one by one.\n\n"
                 "When you've added all your questions, send `/done`."
             )
         except Exception as e:
@@ -261,7 +261,7 @@ async def handle_creation_poll(update: Update, context: ContextTypes.DEFAULT_TYP
     poll = update.message.poll
     if poll.type != Poll.QUIZ or poll.correct_option_id is None:
         await update.message.reply_text(
-            "⚠️ That's not a valid quiz poll! Please make sure you create a poll in **Quiz Mode** and select a correct answer."
+            "⚠️ That's not a valid quiz poll! Please make sure you create a poll in 'Quiz Mode' and select a correct answer."
         )
         return
 
@@ -337,10 +337,10 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
             quiz_id = new_quiz.id
             
             message = (
-                f"🎉 *Quiz Created Successfully\\!* 🎉\n\n"
-                f"*Title:* {escape_markdown(new_quiz.title)}\n"
-                f"*ID:* `{quiz_id}`\n"
-                f"*Questions:* {new_quiz.question_count}\n\n"
+                f"🎉 Quiz Created Successfully! 🎉\n\n"
+                f"Title: {escape_markdown(new_quiz.title)}\n"
+                f"ID: `{quiz_id}`\n"
+                f"Questions: {new_quiz.question_count}\n\n"
                 f"To start this quiz in a group, go to the group and use the command:\n"
                 f"`/start_quiz {quiz_id}`"
             )
